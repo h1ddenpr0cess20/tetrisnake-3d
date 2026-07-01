@@ -193,12 +193,12 @@ export class Renderer3D {
     const pupil = new THREE.MeshStandardNodeMaterial({ color: 0x0a0a0a, roughness: 0.4 });
     const eyeGeo = new THREE.SphereGeometry(CELL * 0.15, 12, 12);
     const pupilGeo = new THREE.SphereGeometry(CELL * 0.08, 10, 10);
-    // lookAt aligns the group's -Z toward travel, so eyes sit on -Z (front).
+    // Object3D.lookAt points the group's +Z toward travel, so eyes sit on +Z.
     for (const sx of [-1, 1]) {
       const e = new THREE.Mesh(eyeGeo, eyeWhite);
-      e.position.set(sx * CELL * 0.24, CELL * 0.16, -CELL * 0.42);
+      e.position.set(sx * CELL * 0.24, CELL * 0.16, CELL * 0.42);
       const p = new THREE.Mesh(pupilGeo, pupil);
-      p.position.set(0, 0, -CELL * 0.12);
+      p.position.set(0, 0, CELL * 0.12);
       e.add(p);
       this.head.add(e);
     }
