@@ -1,10 +1,3 @@
-/*
- * TETRISNAKE 3D — WebGPU edition
- * Full-viewport 3D canvas with DOM overlays (menus, HUD, mobile controls).
- * Design language: deep space-navy, frosted-glass panels, a single green
- * brand accent, tight modern type, and keycap hints.
- */
-
 :root {
   --bg: #05060d;
   --text: #eef1fb;
@@ -63,7 +56,6 @@ html, body {
   touch-action: none;
 }
 
-/* ── HUD ─────────────────────────────────────────────────────────────── */
 .hud {
   position: absolute;
   top: max(16px, env(safe-area-inset-top));
@@ -111,7 +103,6 @@ html, body {
   text-shadow: 0 0 18px rgba(46, 230, 106, 0.65);
 }
 
-/* ── Overlays & panels ───────────────────────────────────────────────── */
 .overlay {
   position: absolute;
   inset: 0;
@@ -142,7 +133,6 @@ html, body {
   -webkit-backdrop-filter: blur(20px) saturate(1.25);
   animation: panel-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
-/* Thin accent bar across the top of each card. */
 .panel::before {
   content: '';
   position: absolute;
@@ -188,7 +178,6 @@ p {
 }
 p strong { color: var(--text); font-weight: 700; }
 
-/* Keycap hints */
 .keyhints {
   display: flex;
   flex-wrap: wrap;
@@ -215,7 +204,6 @@ kbd {
   border-radius: 6px;
 }
 
-/* ── Buttons ─────────────────────────────────────────────────────────── */
 button {
   font-family: inherit;
   cursor: pointer;
@@ -305,13 +293,11 @@ button:focus-visible {
   border-color: rgba(255, 255, 255, 0.2);
 }
 
-/* Final score card */
 .final-stats { margin: 18px 0 6px; }
 .final-stats p { margin: 6px 0; }
 #finalScore { font-size: 1.55rem; font-weight: 800; color: var(--text); }
 #finalLevel { font-size: 1rem; color: var(--muted); }
 
-/* Loading spinner */
 .loading-line {
   display: flex;
   align-items: center;
@@ -328,7 +314,6 @@ button:focus-visible {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* ── Mobile controls ─────────────────────────────────────────────────── */
 .mobile-controls {
   display: none;
   position: fixed;

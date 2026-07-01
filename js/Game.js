@@ -32,7 +32,6 @@ export class Game {
 
     this.score = 0;
     this.level = 1;
-    this.foodEaten = 0;
     this.gameOver = false;
     this.paused = false;
     this.running = false;
@@ -91,7 +90,6 @@ export class Game {
   reset() {
     this.score = 0;
     this.level = 1;
-    this.foodEaten = 0;
     this.gameOver = false;
     this.paused = false;
     this.pendingRespawn = false;
@@ -262,7 +260,6 @@ export class Game {
    */
   handleFoodEaten(cell) {
     this.audioManager.play('eat');
-    this.foodEaten++;
     this.score += config.SCORING.FOOD * this.level;
     this.ui.updateHUD(this.score, this.level);
     this.renderer.burst(cell, config.COLORS.FOOD, 24);

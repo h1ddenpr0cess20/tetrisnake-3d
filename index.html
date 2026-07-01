@@ -25,14 +25,12 @@
   <div id="gameContainer" role="main">
     <canvas id="gameCanvas" aria-label="Tetrisnake 3D Game Canvas"></canvas>
 
-    <!-- Live HUD -->
     <div id="hud" class="hud hidden" aria-hidden="true">
       <div class="hud-item"><span class="hud-label">Score</span><span id="hudScore" class="hud-value">0</span></div>
       <div class="hud-item"><span class="hud-label">Level</span><span id="hudLevel" class="hud-value">1</span></div>
       <div class="hud-item"><span class="hud-label">Speed</span><span id="hudSpeed" class="hud-value">1&times;</span></div>
     </div>
 
-    <!-- Loading / unsupported message -->
     <div id="loading" class="overlay">
       <div class="panel">
         <h1 class="title">Tetrisnake<span class="title-dim">3D</span></h1>
@@ -86,7 +84,6 @@
       </div>
     </div>
 
-    <!-- Mobile Controls -->
     <div id="mobileControls" class="mobile-controls">
       <div class="control-row">
         <button id="upBtn" class="control-btn up-btn" aria-label="Pitch Up">↑</button>
