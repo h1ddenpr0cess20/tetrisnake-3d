@@ -7,6 +7,18 @@ you steer it in all six directions to eat food, and choose where it lands.
 It began as a sarcastic response to Elon Musk's AI game-mashup ideas: originally
 a Pygame app, then a 2D web game, and now a polished 3D WebGPU experience.
 
+## Origin story
+
+The premise was a joke — "just have the AI mash two games together" — and the
+joke keeps getting funnier. In February 2026 xAI merged with SpaceX; in June,
+SpaceX exercised a **$60 billion** all-stock option to buy Cursor, a deal the
+press cheerfully described as a way to *fix xAI's coding gap*. Sixty billion
+dollars later, Grok still limps in around **71% on SWE-bench** (Claude clears
+~81%) and still couldn't ship a Tetris-meets-Snake toy that one guy and a
+chatbot built for laughs. This entire repo — the WebGPU renderer, the
+procedural soundtrack, the tests — is smaller than the rounding error on that
+acquisition. Maybe throw another $60B at it.
+
 ## How it plays
 
 The arena is a tall rectangular **well** (`12 × 12` footprint, `28` high). A
