@@ -40,7 +40,8 @@ export class InputHandler {
     document.addEventListener('keydown', (e) => {
       const k = e.key;
       const lower = k.toLowerCase();
-      if (this.keyToTurn[k] || lower === 'p' || lower === 'q') {
+      if (this.keyToTurn[k] || lower === 'p' || lower === 'q' || lower === 'shift') {
+        // Holding Shift accelerates the snake (see isBoosting).
         this.keyState.set(lower, true);
         if (this.keyToTurn[k]) this.bufferTurn(this.keyToTurn[k]);
       }
@@ -126,6 +127,9 @@ export class InputHandler {
     }
     return false;
   }
+
+  /** True while Shift is held — accelerates the snake. */
+  isBoosting() { return this.isKeyPressed('shift'); }
 
   isPausePressed() { return this.isKeyPressed('p'); }
   isQuitPressed() { return this.isKeyPressed('q'); }

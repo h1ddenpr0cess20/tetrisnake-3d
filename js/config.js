@@ -30,6 +30,7 @@ export const config = {
     MIN_DELAY: 120,        // fastest it ever gets
     LEVEL_STEP: 8,         // ms shaved per level
     LENGTH_STEP: 1.5,      // ms shaved per body segment
+    BOOST_MULT: 3,         // speed multiplier while Shift is held
     LANDING_PAUSE: 1200,   // hold on the locked blocks so you see where you landed
     RESPAWN_PAUSE: 900,    // grace pause before a new snake starts moving
     START_PAUSE: 900       // grace pause at the start of a game

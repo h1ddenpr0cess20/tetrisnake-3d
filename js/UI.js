@@ -23,7 +23,8 @@ export class UI {
       mobileControls: document.getElementById('mobileControls'),
       hud: document.getElementById('hud'),
       hudScore: document.getElementById('hudScore'),
-      hudLevel: document.getElementById('hudLevel')
+      hudLevel: document.getElementById('hudLevel'),
+      hudSpeed: document.getElementById('hudSpeed')
     };
 
     this.soundEnabled = true;
@@ -54,9 +55,13 @@ export class UI {
   showHUD() { if (this.elements.hud) this.elements.hud.classList.remove('hidden'); }
   hideHUD() { if (this.elements.hud) this.elements.hud.classList.add('hidden'); }
 
-  updateHUD(score, level) {
+  updateHUD(score, level, speedMult) {
     if (this.elements.hudScore) this.elements.hudScore.textContent = score.toLocaleString();
     if (this.elements.hudLevel) this.elements.hudLevel.textContent = level;
+    if (speedMult != null && this.elements.hudSpeed) {
+      this.elements.hudSpeed.textContent = `${speedMult}×`;
+      this.elements.hudSpeed.classList.toggle('boost', speedMult > 1);
+    }
   }
 
   showMainMenu() {

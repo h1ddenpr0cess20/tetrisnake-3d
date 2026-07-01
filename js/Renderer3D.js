@@ -148,8 +148,39 @@ export class Renderer3D {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
     this.scene.add(new THREE.LineSegments(
-      geo, new THREE.LineBasicMaterial({ color: config.COLORS.GRID, transparent: true, opacity: 0.24 })
+      geo, new THREE.LineBasicMaterial({ color: config.COLORS.GRID, transparent: true, opacity: 0.22 })
     ));
+
+    // A faint glass tint on the four walls + floor (top stays open — the snake
+    // drops in there). Normal blending at very low opacity, so it reads as
+    // lightly tinted glass rather than solid colored panels.
+    const glass = () => new THREE.MeshBasicNodeMaterial({
+      color: 0x88b6ff, transparent: true, opacity: 0.05,
+      side: THREE.DoubleSide, depthWrite: false
+    });
+    const wall = (w, h, pos, rotY = 0, rotX = 0) => {
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), glass());
+      m.position.copy(pos);
+      m.rotation.set(rotX, rotY, 0);
+      this.scene.add(m);
+    };
+    const V = (x, y, z) => new THREE.Vector3(x, y, z);
+    wall(GD * CELL, GH * CELL, V(HX, 0, 0), -Math.PI / 2);   // +X
+    wall(GD * CELL, GH * CELL, V(-HX, 0, 0), Math.PI / 2);   // -X
+    wall(GW * CELL, GH * CELL, V(0, 0, HZ), Math.PI);        // +Z
+    wall(GW * CELL, GH * CELL, V(0, 0, -HZ));                // -Z
+    wall(GW * CELL, GD * CELL, V(0, -HY, 0), 0, -Math.PI / 2); // floor
+
+    // Faint highlight on the wall square straight ahead of the snake.
+    this.targetCell = new THREE.Mesh(
+      new THREE.PlaneGeometry(CELL, CELL),
+      new THREE.MeshBasicNodeMaterial({
+        color: config.COLORS.HEAD, transparent: true, opacity: 0.14,
+        side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending
+      })
+    );
+    this.targetCell.visible = false;
+    this.scene.add(this.targetCell);
   }
 
   buildBlocks() {
@@ -295,9 +326,18 @@ export class Renderer3D {
   }
 
   onSnakeRespawned(snake) {
-    // Reposition the snake instantly but let the camera glide in (no snap), so
+    // Reposition the snake instantly, and let the camera POSITION glide in so
     // the view sweeps from the landing spot to the fresh snake.
     this.segRender = snake.body.map((s) => this.cellToWorld(s.x, s.y, s.z));
+
+    // Snap the camera's ORIENTATION frame to the new snake immediately. The
+    // spawn frame always points straight down; if the previous run ended
+    // heading upward, easing camForward/camUp toward it would lerp through the
+    // opposite (antipodal) vector, collapse to ~zero at the midpoint, and
+    // normalize into an arbitrary direction — the random "flip" at spawn.
+    this.camForward.set(snake.forward.x, snake.forward.y, snake.forward.z);
+    this.camUp.set(snake.up.x, snake.up.y, snake.up.z);
+    this.manualYaw = this.manualPitch = 0;
   }
 
   /** Rebuilds the locked-block instances from the grid. */
@@ -353,7 +393,7 @@ export class Renderer3D {
   async render(snake, grid, dt, state) {
     const dts = Math.min(dt, 100) / 1000;
     this.time += dts;
-    this.updateSnake(snake, dts, state);
+    this.updateSnake(snake, dts, state, grid);
     this.updateFood(dts);
     this.updateParticles(dts);
     this.updateCamera(snake, dts);
@@ -361,7 +401,7 @@ export class Renderer3D {
     if (p && typeof p.then === 'function') await p;
   }
 
-  updateSnake(snake, dts, state) {
+  updateSnake(snake, dts, state, grid) {
     const body = snake.body;
     const k = state && state.running ? 18 : 10;
     const a = 1 - Math.exp(-dts * k);
@@ -384,9 +424,45 @@ export class Renderer3D {
       for (let j = 0; j < SNAKE_CAP; j++) this.hideInstance(this.snakeBody, j);
       this.snakeBody.instanceMatrix.needsUpdate = true;
       this.head.visible = false;
+      this.targetCell.visible = false;
       return;
     }
     this.head.visible = true;
+
+    // Highlight the first thing straight ahead of the (turn-adjusted) heading:
+    // march cell by cell until a locked block or the wall, then face the quad
+    // onto that block's near face or the wall square.
+    if (snake.peekForward) {
+      const f = snake.peekForward();
+      let cur = snake.getHead(), block = null;
+      while (true) {
+        const nxt = { x: cur.x + f.x, y: cur.y + f.y, z: cur.z + f.z };
+        if (nxt.x < 0 || nxt.x >= GW || nxt.y < 0 || nxt.y >= GH || nxt.z < 0 || nxt.z >= GD) break;
+        if (grid && grid.staticBlocks.has(`${nxt.x},${nxt.y},${nxt.z}`)) { block = nxt; break; }
+        cur = nxt;
+      }
+      const eps = CELL * 0.03;   // nudge off the surface so it doesn't z-fight
+      const tc = this.targetCell;
+      tc.rotation.set(0, 0, 0);
+      if (f.x) tc.rotation.y = Math.PI / 2;
+      else if (f.y) tc.rotation.x = Math.PI / 2;
+      if (block) {
+        // Sit on the block's face that the snake is approaching.
+        tc.position.set((block.x - (GW - 1) / 2) * CELL, (block.y - (GH - 1) / 2) * CELL, (block.z - (GD - 1) / 2) * CELL);
+        tc.position.x -= f.x * (CELL / 2 + eps);
+        tc.position.y -= f.y * (CELL / 2 + eps);
+        tc.position.z -= f.z * (CELL / 2 + eps);
+      } else {
+        // No block in the way — land on the wall, keeping the head's row/column.
+        const h = snake.getHead();
+        tc.position.set((h.x - (GW - 1) / 2) * CELL, (h.y - (GH - 1) / 2) * CELL, (h.z - (GD - 1) / 2) * CELL);
+        if (f.x) tc.position.x = f.x > 0 ? HX - eps : -HX + eps;
+        else if (f.y) tc.position.y = f.y > 0 ? HY - eps : -HY + eps;
+        else tc.position.z = f.z > 0 ? HZ - eps : -HZ + eps;
+      }
+      tc.material.opacity = 0.12 + 0.05 * Math.sin(this.time * 6);
+      tc.visible = true;
+    }
 
     let count = 0;
     const dark = new THREE.Color(0x0a3d16);

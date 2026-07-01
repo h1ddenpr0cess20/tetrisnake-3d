@@ -33,6 +33,7 @@ export class Game {
     this.paused = false;
     this.running = false;
     this.pausePressed = false;
+    this._boosting = false;    // whether Shift-accelerate is currently held
 
     this.lastFrameTime = 0;
     this.accumulator = 0;
@@ -79,11 +80,12 @@ export class Game {
     this.gameOver = false;
     this.paused = false;
     this.pendingRespawn = false;
+    this._boosting = false;
     this.renderer.setSnakeVisible(true);
     this.grid.reset();
     this.snake.spawn();
     this.grid.spawnFood(this.snake);
-    this.ui.updateHUD(this.score, this.level);
+    this.ui.updateHUD(this.score, this.level, this.speedMult);
     this.renderer.reset(this.snake, this.grid);
   }
 
@@ -122,10 +124,18 @@ export class Game {
     if (this.paused && this.inputHandler.isQuitPressed()) { this.quitToMainMenu(); return; }
 
     if (this.running && !this.paused && !this.gameOver) {
+      const boosting = this.inputHandler.isBoosting();
+      if (boosting !== this._boosting) {
+        this._boosting = boosting;
+        this.ui.updateHUD(this.score, this.level, this.speedMult);
+      }
       if (this.inputHandler.isSteering()) this.snake.setActiveDirection('steer', performance.now());
       else this.snake.clearActiveDirection();
     }
   }
+
+  /** Current speed multiplier — boosted while Shift is held. */
+  get speedMult() { return this.inputHandler.isBoosting() ? config.SPEEDS.BOOST_MULT : 1; }
 
   updateSimulation(dt) {
     const now = performance.now();
@@ -142,12 +152,12 @@ export class Game {
 
     this.accumulator += dt;
     let guard = 0;
-    let delay = this.snake.computeDelay(this.level);
+    let delay = this.snake.computeDelay(this.level) / this.speedMult;
     while (this.accumulator >= delay && guard++ < 8) {
       this.accumulator -= delay;
       this.tick();
       if (this.gameOver || this.paused) { this.accumulator = 0; break; }
-      delay = this.snake.computeDelay(this.level);
+      delay = this.snake.computeDelay(this.level) / this.speedMult;
     }
   }
 
