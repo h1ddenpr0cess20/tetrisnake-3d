@@ -1,17 +1,15 @@
 /**
  * Game Configuration — 3D Tetrisnake
- * The arena is a true cube (GRID_N per side). The snake flies freely in all
- * six directions; the camera chases it. Turns are relative to the snake's own
- * orientation (like a flight game), so "up" always curves toward screen-up.
+ * The arena is a tall rectangular "Tetris well" (GRID_W x GRID_D footprint,
+ * GRID_H tall). The snake flies freely in all six directions; the camera
+ * chases it. Turns are relative to the snake's orientation (like a flight
+ * game), so "up" always curves toward screen-up.
  */
-const N = 30;
-
 export const config = {
-  // Cubic arena (cells per side)
-  GRID_N: N,
-  GRID_W: N,
-  GRID_D: N,
-  GRID_H: N,
+  // Arena dimensions (cells) — footprint x height (a tall Tetris well)
+  GRID_W: 12,
+  GRID_D: 12,
+  GRID_H: 28,
 
   CELL: 1, // world units per cell
 
@@ -32,15 +30,16 @@ export const config = {
     MIN_DELAY: 120,        // fastest it ever gets
     LEVEL_STEP: 8,         // ms shaved per level
     LENGTH_STEP: 1.5,      // ms shaved per body segment
-    RESPAWN_PAUSE: 1100,   // grace pause before a new snake starts moving
+    LANDING_PAUSE: 1200,   // hold on the locked blocks so you see where you landed
+    RESPAWN_PAUSE: 900,    // grace pause before a new snake starts moving
     START_PAUSE: 900       // grace pause at the start of a game
   },
 
   // Chase camera (in world units)
   CAMERA: {
-    DISTANCE: 6.2,   // behind the head
-    HEIGHT: 2.2,     // above the head (along the snake's up)
-    LOOK_AHEAD: 4,   // look this far ahead of the head
+    DISTANCE: 5.5,   // behind the head
+    HEIGHT: 2.0,     // above the head (along the snake's up)
+    LOOK_AHEAD: 3,   // look this far ahead of the head
     SMOOTH: 6,       // position smoothing rate
     TURN_SMOOTH: 9   // orientation smoothing rate
   },

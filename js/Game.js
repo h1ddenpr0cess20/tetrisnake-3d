@@ -37,7 +37,9 @@ export class Game {
     this.lastFrameTime = 0;
     this.accumulator = 0;
     this.rendering = false;
-    this.stepPauseUntil = 0; // simulation is frozen until this timestamp
+    this.stepPauseUntil = 0;  // simulation is frozen until this timestamp
+    this.pendingRespawn = false;
+    this.landingUntil = 0;    // hold on the landing spot until this timestamp
 
     this.bindEvents();
     this.ui.updateSoundButtonText();
@@ -76,6 +78,8 @@ export class Game {
     this.foodEaten = 0;
     this.gameOver = false;
     this.paused = false;
+    this.pendingRespawn = false;
+    this.renderer.setSnakeVisible(true);
     this.grid.reset();
     this.snake.spawn();
     this.grid.spawnFood(this.snake);
@@ -124,8 +128,17 @@ export class Game {
   }
 
   updateSimulation(dt) {
-    // Hold the snake still during the post-spawn grace pause.
-    if (performance.now() < this.stepPauseUntil) { this.accumulator = 0; return; }
+    const now = performance.now();
+
+    // After a crash, hold on the locked blocks for a beat, then bring in the
+    // new snake (camera swoops from the landing spot to the fresh snake).
+    if (this.pendingRespawn) {
+      if (now >= this.landingUntil) this.doRespawn();
+      else { this.accumulator = 0; return; }
+    }
+
+    // Grace pause before the snake starts moving.
+    if (now < this.stepPauseUntil) { this.accumulator = 0; return; }
 
     this.accumulator += dt;
     let guard = 0;
@@ -182,16 +195,27 @@ export class Game {
     }
     this.ui.updateHUD(this.score, this.level);
 
-    // New snake; game over only if it has no room to spawn.
+    // Hide the snake and hold the camera on the landed blocks so the player
+    // sees the result; doRespawn() brings in the new snake after the pause.
+    this.renderer.setSnakeVisible(false);
+    this.pendingRespawn = true;
+    this.landingUntil = performance.now() + config.SPEEDS.LANDING_PAUSE;
+    this.accumulator = 0;
+  }
+
+  doRespawn() {
+    this.pendingRespawn = false;
     this.snake.spawn();
-    this.renderer.onSnakeRespawned(this.snake);
+    this.renderer.onSnakeRespawned(this.snake); // camera glides in (no snap)
+    this.renderer.setSnakeVisible(true);
+
+    // Game over only if the new snake has no room to spawn.
     if (this.snake.body.some((s) => this.grid.isStaticBlock(s.x, s.y, s.z))) {
       this.endGame();
-    } else {
-      // Give the player a moment to orient before the new snake moves.
-      this.stepPauseUntil = performance.now() + config.SPEEDS.RESPAWN_PAUSE;
-      this.accumulator = 0;
+      return;
     }
+    this.stepPauseUntil = performance.now() + config.SPEEDS.RESPAWN_PAUSE;
+    this.accumulator = 0;
   }
 
   handleFoodEaten(cell) {

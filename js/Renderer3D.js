@@ -4,11 +4,13 @@ import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { config } from './config.js';
 
-const N = config.GRID_N;
+const GW = config.GRID_W, GD = config.GRID_D, GH = config.GRID_H;
 const CELL = config.CELL;
-const H = (N * CELL) / 2;          // half-extent of the cube
+const HX = (GW * CELL) / 2;        // half-extents of the well
+const HY = (GH * CELL) / 2;
+const HZ = (GD * CELL) / 2;
 const SNAKE_CAP = 512;
-const BLOCK_CAP = 4096;            // max simultaneously drawn locked blocks
+const BLOCK_CAP = Math.min(6000, GW * GD * GH); // max drawn locked blocks
 const PARTICLE_CAP = 640;
 
 /**
@@ -35,13 +37,19 @@ export class Renderer3D {
     this.manualYaw = 0;
     this.manualPitch = 0;
     this.dragging = false;
+    this.snakeVisible = true;
+  }
+
+  setSnakeVisible(v) {
+    this.snakeVisible = v;
+    if (this.head) this.head.visible = v;
   }
 
   cellToWorld(x, y, z, out = new THREE.Vector3()) {
     return out.set(
-      (x - (N - 1) / 2) * CELL,
-      (y - (N - 1) / 2) * CELL,
-      (z - (N - 1) / 2) * CELL
+      (x - (GW - 1) / 2) * CELL,
+      (y - (GH - 1) / 2) * CELL,
+      (z - (GD - 1) / 2) * CELL
     );
   }
 
@@ -98,20 +106,21 @@ export class Renderer3D {
   }
 
   buildLights() {
+    const S = Math.max(HX, HY, HZ);
     this.scene.add(new THREE.HemisphereLight(0x9fb4ff, 0x20203a, 1.0));
     const key = new THREE.DirectionalLight(0xffffff, 1.1);
-    key.position.set(H * 2, H * 2.5, H * 2);
+    key.position.set(S * 1.6, S * 2, S * 1.6);
     this.scene.add(key);
     const rim = new THREE.DirectionalLight(0x4466ff, 0.5);
-    rim.position.set(-H * 2, -H, -H * 2);
+    rim.position.set(-S * 1.6, -S, -S * 1.6);
     this.scene.add(rim);
-    this.foodLight = new THREE.PointLight(config.COLORS.FOOD, 8, 28, 2);
+    this.foodLight = new THREE.PointLight(config.COLORS.FOOD, 6, 12, 2);
     this.scene.add(this.foodLight);
   }
 
   buildArena() {
-    // Glowing edge frame.
-    const box = new THREE.BoxGeometry(N * CELL, N * CELL, N * CELL);
+    // Glowing edge frame around the well.
+    const box = new THREE.BoxGeometry(GW * CELL, GH * CELL, GD * CELL);
     this.scene.add(new THREE.LineSegments(
       new THREE.EdgesGeometry(box),
       new THREE.LineBasicMaterial({ color: config.COLORS.FRAME })
@@ -119,30 +128,27 @@ export class Renderer3D {
 
     // Faint grid on all six walls (depth cues for free flight).
     const pts = [];
-    const a = -H, b = H;
-    const at = (i) => -H + i * CELL;
-    for (let i = 0; i <= N; i++) {
-      const p = at(i);
-      // x = ±H faces (vary y or z)
-      for (const xf of [a, b]) {
-        pts.push(xf, p, a, xf, p, b);
-        pts.push(xf, a, p, xf, b, p);
-      }
-      // y = ±H faces
-      for (const yf of [a, b]) {
-        pts.push(p, yf, a, p, yf, b);
-        pts.push(a, yf, p, b, yf, p);
-      }
-      // z = ±H faces
-      for (const zf of [a, b]) {
-        pts.push(p, a, zf, p, b, zf);
-        pts.push(a, p, zf, b, p, zf);
-      }
+    const px = (i) => -HX + i * CELL;
+    const py = (i) => -HY + i * CELL;
+    const pz = (i) => -HZ + i * CELL;
+
+    for (const xf of [-HX, HX]) {           // side walls (x faces)
+      for (let i = 0; i <= GH; i++) pts.push(xf, py(i), -HZ, xf, py(i), HZ);
+      for (let j = 0; j <= GD; j++) pts.push(xf, -HY, pz(j), xf, HY, pz(j));
     }
+    for (const zf of [-HZ, HZ]) {           // front/back walls (z faces)
+      for (let i = 0; i <= GH; i++) pts.push(-HX, py(i), zf, HX, py(i), zf);
+      for (let j = 0; j <= GW; j++) pts.push(px(j), -HY, zf, px(j), HY, zf);
+    }
+    for (const yf of [-HY, HY]) {           // floor/ceiling (y faces)
+      for (let i = 0; i <= GW; i++) pts.push(px(i), yf, -HZ, px(i), yf, HZ);
+      for (let j = 0; j <= GD; j++) pts.push(-HX, yf, pz(j), HX, yf, pz(j));
+    }
+
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
     this.scene.add(new THREE.LineSegments(
-      geo, new THREE.LineBasicMaterial({ color: config.COLORS.GRID, transparent: true, opacity: 0.28 })
+      geo, new THREE.LineBasicMaterial({ color: config.COLORS.GRID, transparent: true, opacity: 0.24 })
     ));
   }
 
@@ -289,8 +295,9 @@ export class Renderer3D {
   }
 
   onSnakeRespawned(snake) {
+    // Reposition the snake instantly but let the camera glide in (no snap), so
+    // the view sweeps from the landing spot to the fresh snake.
     this.segRender = snake.body.map((s) => this.cellToWorld(s.x, s.y, s.z));
-    this.snapCameraBehind(snake);
   }
 
   /** Rebuilds the locked-block instances from the grid. */
@@ -370,6 +377,16 @@ export class Renderer3D {
       this.cellToWorld(body[i].x, body[i].y, body[i].z, target);
       this.segRender[i].lerp(target, a);
     }
+
+    // Hidden during the landing view: hold segRender (for the camera) but draw
+    // no snake, so only the locked blocks are visible where you crashed.
+    if (!this.snakeVisible) {
+      for (let j = 0; j < SNAKE_CAP; j++) this.hideInstance(this.snakeBody, j);
+      this.snakeBody.instanceMatrix.needsUpdate = true;
+      this.head.visible = false;
+      return;
+    }
+    this.head.visible = true;
 
     let count = 0;
     const dark = new THREE.Color(0x0a3d16);

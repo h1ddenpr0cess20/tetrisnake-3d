@@ -28,7 +28,9 @@ export class Snake {
   }
 
   spawn() {
-    const c = Math.floor(config.GRID_N / 2);
+    const cx = Math.floor(config.GRID_W / 2);
+    const cy = Math.floor(config.GRID_H / 2);
+    const cz = Math.floor(config.GRID_D / 2);
     this.forward = { x: 1, y: 0, z: 0 };
     this.up = { x: 0, y: 1, z: 0 };
     this.pendingTurn = null;
@@ -37,7 +39,7 @@ export class Snake {
     this.body = [];
     // Head at center; body trails behind (opposite forward).
     for (let i = 0; i < len; i++) {
-      this.body.push({ x: c - i, y: c, z: c });
+      this.body.push({ x: cx - i, y: cy, z: cz });
     }
     this.activeDirectionKey = null;
     this.keyHoldStart = 0;

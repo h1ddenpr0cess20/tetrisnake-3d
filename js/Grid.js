@@ -22,8 +22,9 @@ export class Grid {
   }
 
   isOutOfBounds(x, y, z) {
-    const n = config.GRID_N;
-    return x < 0 || x >= n || y < 0 || y >= n || z < 0 || z >= n;
+    return x < 0 || x >= config.GRID_W ||
+           y < 0 || y >= config.GRID_H ||
+           z < 0 || z >= config.GRID_D;
   }
 
   isStaticBlock(x, y, z) { return this.staticBlocks.has(Grid.key(x, y, z)); }
@@ -32,11 +33,10 @@ export class Grid {
 
   /** Places food at a random empty cell (not on a block or the snake). */
   spawnFood(snake) {
-    const n = config.GRID_N;
     for (let t = 0; t < 800; t++) {
-      const x = Math.floor(Math.random() * n);
-      const y = Math.floor(Math.random() * n);
-      const z = Math.floor(Math.random() * n);
+      const x = Math.floor(Math.random() * config.GRID_W);
+      const y = Math.floor(Math.random() * config.GRID_H);
+      const z = Math.floor(Math.random() * config.GRID_D);
       if (this.isStaticBlock(x, y, z)) continue;
       if (snake && snake.isCollidingWith(x, y, z)) continue;
       const h = snake && snake.getHead();
@@ -78,17 +78,17 @@ export class Grid {
    * cells (for effects).
    */
   clearLines() {
-    const n = config.GRID_N;
+    const { GRID_W: W, GRID_D: D, GRID_H: H } = config;
     const toClear = new Set();
     let cleared = 0;
 
-    const scan = (fixed) => {
-      // fixed picks which axis the line runs along; iterate the other two.
-      for (let a = 0; a < n; a++) {
-        for (let b = 0; b < n; b++) {
+    // lenA/lenB iterate the two cross-axes; lenC is the length of the line.
+    const scan = (lenA, lenB, lenC, fixed) => {
+      for (let a = 0; a < lenA; a++) {
+        for (let b = 0; b < lenB; b++) {
           let full = true;
           const cells = [];
-          for (let c = 0; c < n; c++) {
+          for (let c = 0; c < lenC; c++) {
             const [x, y, z] = fixed(a, b, c);
             if (!this.isStaticBlock(x, y, z)) { full = false; break; }
             cells.push(Grid.key(x, y, z));
@@ -97,9 +97,9 @@ export class Grid {
         }
       }
     };
-    scan((a, b, c) => [c, a, b]); // lines along X
-    scan((a, b, c) => [a, c, b]); // lines along Y
-    scan((a, b, c) => [a, b, c]); // lines along Z
+    scan(H, D, W, (a, b, c) => [c, a, b]); // lines along X (length W)
+    scan(W, D, H, (a, b, c) => [a, c, b]); // lines along Y (length H)
+    scan(W, H, D, (a, b, c) => [a, b, c]); // lines along Z (length D)
 
     const cells = [];
     for (const k of toClear) {
