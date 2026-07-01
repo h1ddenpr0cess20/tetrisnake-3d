@@ -4,7 +4,7 @@
  * six directions; the camera chases it. Turns are relative to the snake's own
  * orientation (like a flight game), so "up" always curves toward screen-up.
  */
-const N = 12;
+const N = 30;
 
 export const config = {
   // Cubic arena (cells per side)
@@ -25,14 +25,12 @@ export const config = {
     BG_BOTTOM: 0x02020a
   },
 
-  // Movement timing (ms per grid step)
+  // Movement timing (ms per grid step) — steady speed, gently faster by level
   SPEEDS: {
-    MOVE_DELAY: 180,       // base step delay
-    FAST_MOVE_DELAY: 70,   // delay while a turn key is held (accelerated)
-    HOLD_SCALE: 500,
-    MIN_DELAY: 70,
-    LEVEL_STEP: 10,        // ms shaved per level
-    LENGTH_STEP: 3         // ms shaved per body segment
+    MOVE_DELAY: 240,       // base step delay
+    MIN_DELAY: 120,        // fastest it ever gets
+    LEVEL_STEP: 8,         // ms shaved per level
+    LENGTH_STEP: 1.5       // ms shaved per body segment
   },
 
   // Chase camera (in world units)

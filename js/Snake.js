@@ -99,18 +99,12 @@ export class Snake {
   }
 
   computeDelay(level) {
-    const { MOVE_DELAY, FAST_MOVE_DELAY, HOLD_SCALE, MIN_DELAY, LEVEL_STEP, LENGTH_STEP } = config.SPEEDS;
-    const extra = this.body.length - 3;
-    const base = Math.max(
-      MIN_DELAY + 15,
-      MOVE_DELAY - Math.min(level - 1, 12) * LEVEL_STEP - Math.max(0, extra) * LENGTH_STEP
+    const { MOVE_DELAY, MIN_DELAY, LEVEL_STEP, LENGTH_STEP } = config.SPEEDS;
+    const extra = Math.max(0, this.body.length - 3);
+    return Math.max(
+      MIN_DELAY,
+      MOVE_DELAY - Math.min(level - 1, 12) * LEVEL_STEP - extra * LENGTH_STEP
     );
-    let delay = base;
-    if (this.activeDirectionKey && this.keyHoldStart) {
-      const factor = Math.min((performance.now() - this.keyHoldStart) / HOLD_SCALE, 1);
-      delay = Math.max(MIN_DELAY, base - (base - FAST_MOVE_DELAY) * factor);
-    }
-    return delay;
   }
 
   setActiveDirection(key, timestamp) {

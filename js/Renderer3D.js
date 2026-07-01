@@ -103,7 +103,7 @@ export class Renderer3D {
     const rim = new THREE.DirectionalLight(0x4466ff, 0.5);
     rim.position.set(-H * 2, -H, -H * 2);
     this.scene.add(rim);
-    this.foodLight = new THREE.PointLight(config.COLORS.FOOD, 5, 12, 2);
+    this.foodLight = new THREE.PointLight(config.COLORS.FOOD, 8, 28, 2);
     this.scene.add(this.foodLight);
   }
 
