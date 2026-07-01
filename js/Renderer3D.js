@@ -29,6 +29,16 @@ export class Renderer3D {
     this.blockKeyToIndex = new Map();
   }
 
+  /**
+   * Pre-allocates a per-instance color attribute so the node material compiles
+   * with the instance-color branch enabled from the very first frame (even
+   * before any instances are drawn).
+   */
+  initInstanceColor(mesh, cap) {
+    mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3).fill(1), 3);
+    mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+  }
+
   cellToWorld(x, y, z, out = new THREE.Vector3()) {
     return out.set(
       (x - (GRID_W - 1) / 2) * CELL,
@@ -38,13 +48,27 @@ export class Renderer3D {
   }
 
   async init() {
-    this.renderer = new THREE.WebGPURenderer({ canvas: this.canvas, antialias: true, alpha: false });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    await this.renderer.init();
+    // ?webgl=1 forces the WebGL2 backend (useful for headless/verification);
+    // production defaults to WebGPU and falls back to WebGL2 if init fails.
+    const forceWebGL = /[?&]webgl=1/.test(location.search);
+    const makeRenderer = (webgl) => {
+      const r = new THREE.WebGPURenderer({ canvas: this.canvas, antialias: true, alpha: false, forceWebGL: webgl });
+      r.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      r.toneMapping = THREE.ACESFilmicToneMapping;
+      r.toneMappingExposure = 1.05;
+      r.shadowMap.enabled = true;
+      r.shadowMap.type = THREE.PCFSoftShadowMap;
+      return r;
+    };
+    try {
+      this.renderer = makeRenderer(forceWebGL);
+      await this.renderer.init();
+    } catch (err) {
+      if (forceWebGL) throw err;
+      console.warn('WebGPU unavailable, falling back to WebGL2:', err);
+      this.renderer = makeRenderer(true);
+      await this.renderer.init();
+    }
 
     this.scene = new THREE.Scene();
     this.scene.backgroundNode = mix(
@@ -162,6 +186,7 @@ export class Renderer3D {
     });
     this.blocks = new THREE.InstancedMesh(geo, mat, BLOCK_CAP);
     this.blocks.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.initInstanceColor(this.blocks, BLOCK_CAP);
     this.blocks.castShadow = true;
     this.blocks.receiveShadow = true;
     this.blocks.count = 0;
@@ -176,6 +201,7 @@ export class Renderer3D {
     });
     this.snakeBody = new THREE.InstancedMesh(geo, mat, SNAKE_CAP);
     this.snakeBody.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.initInstanceColor(this.snakeBody, SNAKE_CAP);
     this.snakeBody.castShadow = true;
     this.snakeBody.count = 0;
     this.scene.add(this.snakeBody);
@@ -184,7 +210,7 @@ export class Renderer3D {
     this.head = new THREE.Group();
     const headMat = new THREE.MeshStandardNodeMaterial({
       color: config.COLORS.HEAD, roughness: 0.25, metalness: 0.1,
-      emissive: new THREE.Color(config.COLORS.HEAD).multiplyScalar(0.5)
+      emissive: new THREE.Color(config.COLORS.HEAD).multiplyScalar(0.3)
     });
     const headMesh = new THREE.Mesh(
       new RoundedBoxGeometry(CELL * 0.98, CELL * 0.98, CELL * 0.98, 4, CELL * 0.3), headMat
@@ -229,6 +255,7 @@ export class Renderer3D {
     const mat = new THREE.MeshBasicNodeMaterial({ color: 0xffffff, transparent: true, opacity: 1 });
     this.particleMesh = new THREE.InstancedMesh(geo, mat, PARTICLE_CAP);
     this.particleMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.initInstanceColor(this.particleMesh, PARTICLE_CAP);
     this.particleMesh.count = 0;
     this.particleMesh.frustumCulled = false;
     this.scene.add(this.particleMesh);
@@ -238,9 +265,11 @@ export class Renderer3D {
   }
 
   buildPostFX() {
-    this.postProcessing = new THREE.PostProcessing(this.renderer);
+    // r185: PostProcessing was renamed RenderPipeline; keep a fallback.
+    const Pipeline = THREE.RenderPipeline || THREE.PostProcessing;
+    this.postProcessing = new Pipeline(this.renderer);
     const scenePass = pass(this.scene, this.camera);
-    const bloomPass = bloom(scenePass, 0.85, 0.5, 0.12);
+    const bloomPass = bloom(scenePass, 0.6, 0.45, 0.2);
     this.postProcessing.outputNode = scenePass.add(bloomPass);
   }
 
@@ -335,7 +364,9 @@ export class Renderer3D {
     this.updateParticles(dts);
     this.updateCamera(dts, state);
 
-    await this.postProcessing.renderAsync();
+    // r185: RenderPipeline.render() replaces the deprecated renderAsync().
+    const p = this.postProcessing.render();
+    if (p && typeof p.then === 'function') await p;
   }
 
   updateSnake(snake, dts, state) {

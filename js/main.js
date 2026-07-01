@@ -9,6 +9,7 @@ async function boot() {
   const loading = document.getElementById('loading');
   try {
     const game = new Game('gameCanvas');
+    window.__game = game;
     await game.init();
     if (loading) loading.classList.add('hidden');
   } catch (err) {

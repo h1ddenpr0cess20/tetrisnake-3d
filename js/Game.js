@@ -45,7 +45,9 @@ export class Game {
 
   async init() {
     await this.renderer.init();
-    // Idle-render the well behind the menu so the first screen looks alive.
+    // Show a live (non-playing) well behind the main menu.
+    this.reset();
+    this.ui.showMainMenu();
     this.startRenderLoop();
   }
 
