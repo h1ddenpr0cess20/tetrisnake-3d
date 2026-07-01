@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="description" content="Play Tetrisnake - a unique blend of Tetris and Snake!">
+  <title>Tetrisnake</title>
+  <link rel="stylesheet" href="css/fonts.css">
+  <link rel="stylesheet" href="css/styles.css">
+  <!-- 
+    Note: The green snake color is enforced through:
+    1. config.js COLORS.SNAKE setting 
+    2. CSS variables in styles.css
+    3. Renderer.js color patterns
+  -->
+</head>
+<body>
+  <div id="gameContainer" role="main">
+    <div id="mainMenu" class="overlay" aria-label="Main Menu">      <h1>Tetrisnake</h1>
+      <p>Control the falling snake with arrow keys or touch controls.</p>
+      <p>Eat food to grow and clear lines like Tetris.</p>
+      <p>Avoid walls, blocks, and yourself!</p>
+      <button id="startButton">Start Game</button>
+      <div class="audio-controls">
+        <button id="toggleSound">Sound: On</button>
+        <button id="toggleMusic">Music: On</button>
+      </div>
+    </div>
+    <div id="pausedOverlay" class="overlay hidden" aria-label="Paused">
+      <h1>Paused</h1>
+      <p>Game paused. Use buttons or keyboard shortcuts:</p>
+      <div class="menu-buttons">
+        <button id="resumeButton">Resume Game (P)</button>
+        <button id="quitButton">Quit to Menu (Q)</button>
+      </div>
+      <div class="audio-controls">
+        <button id="toggleSoundPaused">Sound: On</button>
+        <button id="toggleMusicPaused">Music: On</button>
+      </div>
+    </div>
+    <div id="gameOverOverlay" class="overlay hidden" aria-label="Game Over">
+      <h1>Game Over</h1>
+      <p id="finalScore" aria-live="polite"></p>
+      <p id="finalLevel" aria-live="polite"></p>
+      <button id="restartButton">Restart Game</button>
+    </div>
+    <canvas id="gameCanvas" aria-label="Tetrisnake Game Canvas"></canvas>
+    
+    <!-- Mobile Controls -->
+    <div id="mobileControls" class="mobile-controls">
+      <div class="control-row">
+        <button id="upBtn" class="control-btn up-btn" aria-label="Move Up">↑</button>
+      </div>
+      <div class="control-row">
+        <button id="leftBtn" class="control-btn left-btn" aria-label="Move Left">←</button>
+        <button id="pauseBtn" class="control-btn pause-btn" aria-label="Pause">⏸</button>
+        <button id="rightBtn" class="control-btn right-btn" aria-label="Move Right">→</button>
+      </div>
+      <div class="control-row">
+        <button id="downBtn" class="control-btn down-btn" aria-label="Move Down">↓</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts loaded in dependency order:
+       1. Configuration and foundational classes
+       2. UI and input handling components
+       3. Core game logic
+       4. Main initialization -->
+  <script src="js/config.js"></script>
+  <script src="js/AudioManager.js"></script>
+  <script src="js/Snake.js"></script>
+  <script src="js/Grid.js"></script>
+  <script src="js/Renderer.js"></script>
+  <script src="js/UI.js"></script>
+  <script src="js/InputHandler.js"></script>
+  <script src="js/Game.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
