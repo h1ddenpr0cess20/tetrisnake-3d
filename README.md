@@ -1,42 +1,66 @@
-# Tetrisnake
+# Tetrisnake 3D
 
-Tetrisnake is a blend of Tetris and Snake mechanics, created as a sarcastic response to Elon Musk's AI game mashup ideas. The game was initially developed as a Pygame application with assistance from ChatGPT o3-mini-high and Grok 3. It was later converted to a web application and refined using the same AI tools. Final polishing was done using various LLMs in Cursor, primarily with claude-3.7-sonnet-thinking.
+Tetrisnake is a blend of Tetris and Snake, rebuilt as a fully 3D game rendered
+with **three.js r185** and **WebGPU** (with automatic WebGL2 fallback). Guide a
+falling snake down a three‑dimensional well, eat food to grow, and fill a whole
+floor layer to clear it — Tetris style, in 3D.
 
-## Description
+It began as a sarcastic response to Elon Musk's AI game‑mashup ideas: originally
+a Pygame app, then a 2D web game, and now a polished 3D WebGPU experience.
 
-Tetrisnake combines elements from both classic games:
-- Control a snake as it descends through a grid (like Tetris blocks)
-- Eat food to grow the snake (like in Snake)
-- When the snake collides with the bottom or other blocks, it gets locked in place
-- Clear lines by filling them completely (like in Tetris)
-- Avoid walls, existing blocks, and the snake's own body!
+## How it plays
 
-## How to Play
+The play field is a vertical **well** — a `5 × 5 × 14` cube. The snake always
+falls straight down (`−Y`) on its own. You **steer it horizontally** through the
+`X`/`Z` plane to reach food and to choose where it lands.
 
-### Controls
-- **Desktop**: Use arrow keys to move the snake left, right, up or down (holding any arrow key accelerates movement)
-- **Mobile**: Use the virtual control buttons or swipe gestures on the game canvas
-- **P**: Pause the game
-- **Q**: When paused, quit to main menu
+- **Eat food** to grow the snake and score points.
+- When the snake **lands** on the floor or on top of the stack — or crashes into
+  a block or itself — it **locks into place** as colored blocks.
+- Fill an entire horizontal **layer** (all `5 × 5` cells) to **clear it**;
+  everything above drops down. Clearing multiple layers at once scores big.
+- The game ends when a new snake has no room to spawn at the top.
 
-### Mobile Features
-- Touch-responsive virtual controls for mobile devices
-- Swipe gestures on the game canvas for direction changes
-- Optimized scaling and layout for different screen sizes
-- Haptic feedback (vibration) when available
-- Auto-detection of mobile devices with appropriate UI adjustments
+Not steering? The snake falls in a straight column — so line it up before it
+lands.
 
-### Gameplay
-1. The snake descends automatically like a Tetris piece
-2. Move the snake to collect food and avoid obstacles
-3. Each food item eaten increases your score and makes the snake longer
-4. When the snake collides with the bottom or other blocks, it becomes locked in place
-5. Fill a complete horizontal line to clear it and earn points
-6. The game ends when the snake can no longer move or spawns into an occupied space
+## Controls
+
+| Action | Desktop | Mobile |
+| --- | --- | --- |
+| Steer left / right (X) | ← / → | on‑screen buttons or swipe |
+| Steer forward / back (Z) | ↑ / ↓ | on‑screen buttons or swipe |
+| Pause | **P** | ⏸ button |
+| Quit to menu (while paused) | **Q** | — |
+
+Holding a steer key accelerates the snake. Mobile devices get touch controls,
+swipe gestures, and haptic feedback where available.
 
 ## Features
 
-- Increasing difficulty as you level up
-- Toggle sound effects and background music
-- Score tracking and level progression
-- Responsive design for different screen sizes
+- True 3D gameplay in a WebGPU‑rendered well (three.js r185)
+- Emissive neon materials with bloom post‑processing, dynamic lighting and shadows
+- Smoothly interpolated snake motion, particle bursts, and camera shake
+- Procedural sound effects and adaptive background music (Web Audio API)
+- Increasing speed and difficulty as you level up
+- Responsive, full‑viewport layout for desktop and mobile
+
+## Running
+
+It's a static site — serve the folder over HTTP and open `index.html`:
+
+```bash
+python3 -m http.server 8000
+# then visit http://localhost:8000
+```
+
+A modern browser with WebGPU (recent Chrome/Edge) gives the best experience;
+browsers without WebGPU fall back to WebGL2 automatically. Append `?webgl=1` to
+force the WebGL2 backend.
+
+## Tech
+
+- **three.js r185** (`WebGPURenderer`, TSL node materials, `RenderPipeline` bloom),
+  loaded via an ES‑module import map from a CDN — no build step.
+- Vanilla ES modules for game logic (`Snake`, `Grid`, `Game`, `InputHandler`,
+  `UI`, `AudioManager`) and a dedicated `Renderer3D`.
