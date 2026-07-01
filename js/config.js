@@ -18,6 +18,7 @@ export const config = {
   COLORS: {
     SNAKE: 0x27d94b,   // snake body (green)
     HEAD: 0x8bffa3,    // snake head highlight
+    BLOCK: 0xff7a1a,   // locked blocks (orange)
     FOOD: 0xff3d7f,    // food (pink)
     GRID: 0x2a2a55,    // wall grid lines
     FRAME: 0x5a6cff,   // cube frame glow
@@ -30,7 +31,9 @@ export const config = {
     MOVE_DELAY: 240,       // base step delay
     MIN_DELAY: 120,        // fastest it ever gets
     LEVEL_STEP: 8,         // ms shaved per level
-    LENGTH_STEP: 1.5       // ms shaved per body segment
+    LENGTH_STEP: 1.5,      // ms shaved per body segment
+    RESPAWN_PAUSE: 1100,   // grace pause before a new snake starts moving
+    START_PAUSE: 900       // grace pause at the start of a game
   },
 
   // Chase camera (in world units)
@@ -43,8 +46,9 @@ export const config = {
   },
 
   SCORING: {
-    FOOD: 10,             // * level per food
-    FOOD_PER_LEVEL: 4     // foods eaten to advance a level
+    FOOD: 10,               // * level per food
+    LINE: 50,               // * level * lines for a line clear
+    BLOCKS_PER_LEVEL: 40    // landed blocks to advance a level
   },
 
   MOBILE: {

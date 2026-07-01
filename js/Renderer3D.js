@@ -8,6 +8,7 @@ const N = config.GRID_N;
 const CELL = config.CELL;
 const H = (N * CELL) / 2;          // half-extent of the cube
 const SNAKE_CAP = 512;
+const BLOCK_CAP = 4096;            // max simultaneously drawn locked blocks
 const PARTICLE_CAP = 640;
 
 /**
@@ -85,6 +86,7 @@ export class Renderer3D {
 
     this.buildLights();
     this.buildArena();
+    this.buildBlocks();
     this.buildSnake();
     this.buildFood();
     this.buildParticles();
@@ -142,6 +144,21 @@ export class Renderer3D {
     this.scene.add(new THREE.LineSegments(
       geo, new THREE.LineBasicMaterial({ color: config.COLORS.GRID, transparent: true, opacity: 0.28 })
     ));
+  }
+
+  buildBlocks() {
+    const geo = new RoundedBoxGeometry(CELL * 0.92, CELL * 0.92, CELL * 0.92, 2, CELL * 0.12);
+    const mat = new THREE.MeshStandardNodeMaterial({
+      color: 0xffffff, roughness: 0.45, metalness: 0.25,
+      emissive: new THREE.Color(config.COLORS.BLOCK).multiplyScalar(0.45)
+    });
+    this.blocks = new THREE.InstancedMesh(geo, mat, BLOCK_CAP);
+    this.blocks.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.initInstanceColor(this.blocks, BLOCK_CAP);
+    this.blocks.frustumCulled = false;
+    this.blocks.count = BLOCK_CAP;
+    for (let i = 0; i < BLOCK_CAP; i++) this.hideInstance(this.blocks, i);
+    this.scene.add(this.blocks);
   }
 
   buildSnake() {
@@ -254,17 +271,49 @@ export class Renderer3D {
     this.cellToWorld(grid.food.x, grid.food.y, grid.food.z, this.foodTarget);
     this.foodPos.copy(this.foodTarget);
     for (const p of this.particles) p.life = 0;
+    this.syncBlocks(grid);
+    this.snapCameraBehind(snake);
+  }
 
+  /** Reframes the camera directly behind a (re)spawned snake. */
+  snapCameraBehind(snake) {
     this.camForward.set(snake.forward.x, snake.forward.y, snake.forward.z);
     this.camUp.set(snake.up.x, snake.up.y, snake.up.z);
     this.manualYaw = this.manualPitch = 0;
-    // Snap the camera behind the head so the first frame is framed correctly.
-    const head = this.segRender[0];
+    const head = this.segRender[0] || new THREE.Vector3();
     const rel = this.camForward.clone().multiplyScalar(-config.CAMERA.DISTANCE)
       .add(this.camUp.clone().multiplyScalar(config.CAMERA.HEIGHT));
     this.camera.position.copy(head).add(rel);
     this.camera.up.copy(this.camUp);
     this.camera.lookAt(head);
+  }
+
+  onSnakeRespawned(snake) {
+    this.segRender = snake.body.map((s) => this.cellToWorld(s.x, s.y, s.z));
+    this.snapCameraBehind(snake);
+  }
+
+  /** Rebuilds the locked-block instances from the grid. */
+  syncBlocks(grid) {
+    let i = 0;
+    for (const [posKey, col] of grid.staticBlocks) {
+      if (i >= BLOCK_CAP) break;
+      const [x, y, z] = posKey.split(',').map(Number);
+      this.cellToWorld(x, y, z, this._m.position);
+      this._m.rotation.set(0, 0, 0);
+      this._m.scale.setScalar(1);
+      this._m.updateMatrix();
+      this.blocks.setMatrixAt(i, this._m.matrix);
+      this.blocks.setColorAt(i, this._c.set(col));
+      i++;
+    }
+    for (let j = i; j < BLOCK_CAP; j++) this.hideInstance(this.blocks, j);
+    this.blocks.instanceMatrix.needsUpdate = true;
+    if (this.blocks.instanceColor) this.blocks.instanceColor.needsUpdate = true;
+  }
+
+  onLinesCleared(cells) {
+    for (const c of cells) this.burst(c, config.COLORS.FRAME, 2);
   }
 
   onSnakeMoved(snake) {

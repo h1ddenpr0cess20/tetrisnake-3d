@@ -37,6 +37,7 @@ export class Game {
     this.lastFrameTime = 0;
     this.accumulator = 0;
     this.rendering = false;
+    this.stepPauseUntil = 0; // simulation is frozen until this timestamp
 
     this.bindEvents();
     this.ui.updateSoundButtonText();
@@ -66,6 +67,7 @@ export class Game {
     this.running = true;
     this.lastFrameTime = performance.now();
     this.accumulator = 0;
+    this.stepPauseUntil = performance.now() + config.SPEEDS.START_PAUSE;
   }
 
   reset() {
@@ -122,6 +124,9 @@ export class Game {
   }
 
   updateSimulation(dt) {
+    // Hold the snake still during the post-spawn grace pause.
+    if (performance.now() < this.stepPauseUntil) { this.accumulator = 0; return; }
+
     this.accumulator += dt;
     let guard = 0;
     let delay = this.snake.computeDelay(this.level);
@@ -139,11 +144,14 @@ export class Game {
     if (turn) this.snake.queueTurn(turn);
 
     const nh = this.snake.peekHead();
-
-    if (this.grid.isOutOfBounds(nh.x, nh.y, nh.z)) { this.endGame(); return; }
-
     const eating = this.grid.isFood(nh.x, nh.y, nh.z);
-    if (this.snake.isCollidingWith(nh.x, nh.y, nh.z, !eating)) { this.endGame(); return; }
+
+    // Original rule: hitting a wall, a block, or yourself LOCKS the snake into
+    // blocks and spawns a new one — it is not an instant loss.
+    const hitsWall = this.grid.isOutOfBounds(nh.x, nh.y, nh.z);
+    const hitsBlock = !hitsWall && this.grid.isStaticBlock(nh.x, nh.y, nh.z);
+    const hitsSelf = !hitsWall && this.snake.isCollidingWith(nh.x, nh.y, nh.z, !eating);
+    if (hitsWall || hitsBlock || hitsSelf) { this.handleLock(); return; }
 
     this.snake.step(eating);
     this.renderer.onSnakeMoved(this.snake);
@@ -152,11 +160,44 @@ export class Game {
     else this.audioManager.play('move');
   }
 
+  handleLock() {
+    this.audioManager.play('collision');
+    this.renderer.shake(0.5);
+
+    this.grid.lockSnake(this.snake);
+    this.renderer.burst(this.snake.getHead(), config.COLORS.BLOCK, 16);
+
+    const result = this.grid.clearLines();
+    if (result.cleared > 0) {
+      this.audioManager.play('lineClear');
+      this.score += config.SCORING.LINE * this.level * result.cleared * result.cleared;
+      this.renderer.onLinesCleared(result.cells);
+      this.renderer.shake(0.4 + 0.2 * result.cleared);
+    }
+    this.renderer.syncBlocks(this.grid);
+
+    this.level = 1 + Math.floor(this.grid.landedBlocks / config.SCORING.BLOCKS_PER_LEVEL);
+    if (this.level >= 5 && !this.audioManager.isMusicMuted) {
+      this.audioManager.changeBackgroundMusic(this.level);
+    }
+    this.ui.updateHUD(this.score, this.level);
+
+    // New snake; game over only if it has no room to spawn.
+    this.snake.spawn();
+    this.renderer.onSnakeRespawned(this.snake);
+    if (this.snake.body.some((s) => this.grid.isStaticBlock(s.x, s.y, s.z))) {
+      this.endGame();
+    } else {
+      // Give the player a moment to orient before the new snake moves.
+      this.stepPauseUntil = performance.now() + config.SPEEDS.RESPAWN_PAUSE;
+      this.accumulator = 0;
+    }
+  }
+
   handleFoodEaten(cell) {
     this.audioManager.play('eat');
     this.foodEaten++;
     this.score += config.SCORING.FOOD * this.level;
-    this.level = 1 + Math.floor(this.foodEaten / config.SCORING.FOOD_PER_LEVEL);
     this.ui.updateHUD(this.score, this.level);
     this.renderer.burst(cell, config.COLORS.FOOD, 24);
 
