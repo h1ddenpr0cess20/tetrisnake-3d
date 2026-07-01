@@ -4,34 +4,44 @@ import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { config } from './config.js';
 
+/**
+ * @typedef {import('./Snake.js').Snake} Snake
+ * @typedef {import('./Grid.js').Grid} Grid
+ * @typedef {import('./Snake.js').Vec3} Vec3
+ */
+
 const GW = config.GRID_W, GD = config.GRID_D, GH = config.GRID_H;
 const CELL = config.CELL;
-const HX = (GW * CELL) / 2;        // half-extents of the well
+const HX = (GW * CELL) / 2;
 const HY = (GH * CELL) / 2;
 const HZ = (GD * CELL) / 2;
 const SNAKE_CAP = 512;
-const BLOCK_CAP = Math.min(6000, GW * GD * GH); // max drawn locked blocks
+const BLOCK_CAP = Math.min(6000, GW * GD * GH);
 const PARTICLE_CAP = 640;
 
 /**
- * Renderer3D — WebGPU (three.js r185)
- * Renders the cubic arena, the free-flying snake, and the food, with a chase
- * camera that follows the snake and supports manual drag-to-orbit. Emissive
- * neon materials + bloom, smoothly interpolated motion, particles, camera shake.
+ * WebGPU renderer (three.js r185) for the cubic arena, the free-flying snake,
+ * and the food. A chase camera follows the snake with optional drag-to-orbit,
+ * and emissive neon materials feed a bloom post-processing pass. Motion is
+ * smoothly interpolated, with particle bursts and camera shake for feedback.
  */
 export class Renderer3D {
+  /**
+   * @param {HTMLCanvasElement} canvas
+   */
   constructor(canvas) {
     this.canvas = canvas;
     this.time = 0;
     this.shakeAmt = 0;
+    /** @type {THREE.Vector3[]} Interpolated world positions, head first. */
     this.segRender = [];
     this.foodPos = new THREE.Vector3();
     this.foodTarget = new THREE.Vector3();
     this._m = new THREE.Object3D();
     this._c = new THREE.Color();
+    /** @type {Array<{life:number,maxLife:number,pos:THREE.Vector3,vel:THREE.Vector3,col:THREE.Color,size:number}>} */
     this.particles = [];
 
-    // Camera orientation frame (smoothed toward the snake's) + manual orbit.
     this.camForward = new THREE.Vector3(1, 0, 0);
     this.camUp = new THREE.Vector3(0, 1, 0);
     this.manualYaw = 0;
@@ -40,11 +50,22 @@ export class Renderer3D {
     this.snakeVisible = true;
   }
 
+  /**
+   * @param {boolean} v Whether the snake meshes should be drawn.
+   */
   setSnakeVisible(v) {
     this.snakeVisible = v;
     if (this.head) this.head.visible = v;
   }
 
+  /**
+   * Converts a grid cell to its centered world position.
+   * @param {number} x
+   * @param {number} y
+   * @param {number} z
+   * @param {THREE.Vector3} [out] Target vector to write into.
+   * @returns {THREE.Vector3}
+   */
   cellToWorld(x, y, z, out = new THREE.Vector3()) {
     return out.set(
       (x - (GW - 1) / 2) * CELL,
@@ -53,11 +74,22 @@ export class Renderer3D {
     );
   }
 
+  /**
+   * Attaches a dynamic per-instance color buffer to an instanced mesh.
+   * @param {THREE.InstancedMesh} mesh
+   * @param {number} cap Instance count.
+   */
   initInstanceColor(mesh, cap) {
     mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3).fill(1), 3);
     mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
   }
 
+  /**
+   * Collapses an instance to zero scale and parks it off-screen so it renders
+   * nothing.
+   * @param {THREE.InstancedMesh} mesh
+   * @param {number} i Instance index.
+   */
   hideInstance(mesh, i) {
     this._m.position.set(0, -99999, 0);
     this._m.rotation.set(0, 0, 0);
@@ -66,6 +98,11 @@ export class Renderer3D {
     mesh.setMatrixAt(i, this._m.matrix);
   }
 
+  /**
+   * Creates the WebGPU renderer (falling back to WebGL2), builds the scene, and
+   * sizes the viewport. Appending `?webgl=1` forces the WebGL2 backend.
+   * @returns {Promise<this>}
+   */
   async init() {
     const forceWebGL = /[?&]webgl=1/.test(location.search);
     const make = (webgl) => {
@@ -105,6 +142,7 @@ export class Renderer3D {
     return this;
   }
 
+  /** Adds hemisphere, key, rim, and food-tracking point lights. */
   buildLights() {
     const S = Math.max(HX, HY, HZ);
     this.scene.add(new THREE.HemisphereLight(0x9fb4ff, 0x20203a, 1.0));
@@ -118,29 +156,31 @@ export class Renderer3D {
     this.scene.add(this.foodLight);
   }
 
+  /**
+   * Builds the well: a glowing edge frame, faint grid lines on all six walls,
+   * lightly tinted glass panels (top left open), and the look-ahead target quad.
+   */
   buildArena() {
-    // Glowing edge frame around the well.
     const box = new THREE.BoxGeometry(GW * CELL, GH * CELL, GD * CELL);
     this.scene.add(new THREE.LineSegments(
       new THREE.EdgesGeometry(box),
       new THREE.LineBasicMaterial({ color: config.COLORS.FRAME })
     ));
 
-    // Faint grid on all six walls (depth cues for free flight).
     const pts = [];
     const px = (i) => -HX + i * CELL;
     const py = (i) => -HY + i * CELL;
     const pz = (i) => -HZ + i * CELL;
 
-    for (const xf of [-HX, HX]) {           // side walls (x faces)
+    for (const xf of [-HX, HX]) {
       for (let i = 0; i <= GH; i++) pts.push(xf, py(i), -HZ, xf, py(i), HZ);
       for (let j = 0; j <= GD; j++) pts.push(xf, -HY, pz(j), xf, HY, pz(j));
     }
-    for (const zf of [-HZ, HZ]) {           // front/back walls (z faces)
+    for (const zf of [-HZ, HZ]) {
       for (let i = 0; i <= GH; i++) pts.push(-HX, py(i), zf, HX, py(i), zf);
       for (let j = 0; j <= GW; j++) pts.push(px(j), -HY, zf, px(j), HY, zf);
     }
-    for (const yf of [-HY, HY]) {           // floor/ceiling (y faces)
+    for (const yf of [-HY, HY]) {
       for (let i = 0; i <= GW; i++) pts.push(px(i), yf, -HZ, px(i), yf, HZ);
       for (let j = 0; j <= GD; j++) pts.push(-HX, yf, pz(j), HX, yf, pz(j));
     }
@@ -151,9 +191,6 @@ export class Renderer3D {
       geo, new THREE.LineBasicMaterial({ color: config.COLORS.GRID, transparent: true, opacity: 0.22 })
     ));
 
-    // A faint glass tint on the four walls + floor (top stays open — the snake
-    // drops in there). Normal blending at very low opacity, so it reads as
-    // lightly tinted glass rather than solid colored panels.
     const glass = () => new THREE.MeshBasicNodeMaterial({
       color: 0x88b6ff, transparent: true, opacity: 0.05,
       side: THREE.DoubleSide, depthWrite: false
@@ -165,13 +202,12 @@ export class Renderer3D {
       this.scene.add(m);
     };
     const V = (x, y, z) => new THREE.Vector3(x, y, z);
-    wall(GD * CELL, GH * CELL, V(HX, 0, 0), -Math.PI / 2);   // +X
-    wall(GD * CELL, GH * CELL, V(-HX, 0, 0), Math.PI / 2);   // -X
-    wall(GW * CELL, GH * CELL, V(0, 0, HZ), Math.PI);        // +Z
-    wall(GW * CELL, GH * CELL, V(0, 0, -HZ));                // -Z
-    wall(GW * CELL, GD * CELL, V(0, -HY, 0), 0, -Math.PI / 2); // floor
+    wall(GD * CELL, GH * CELL, V(HX, 0, 0), -Math.PI / 2);
+    wall(GD * CELL, GH * CELL, V(-HX, 0, 0), Math.PI / 2);
+    wall(GW * CELL, GH * CELL, V(0, 0, HZ), Math.PI);
+    wall(GW * CELL, GH * CELL, V(0, 0, -HZ));
+    wall(GW * CELL, GD * CELL, V(0, -HY, 0), 0, -Math.PI / 2);
 
-    // Faint highlight on the wall square straight ahead of the snake.
     this.targetCell = new THREE.Mesh(
       new THREE.PlaneGeometry(CELL, CELL),
       new THREE.MeshBasicNodeMaterial({
@@ -183,6 +219,7 @@ export class Renderer3D {
     this.scene.add(this.targetCell);
   }
 
+  /** Builds the instanced mesh for locked blocks, initially all hidden. */
   buildBlocks() {
     const geo = new RoundedBoxGeometry(CELL * 0.92, CELL * 0.92, CELL * 0.92, 2, CELL * 0.12);
     const mat = new THREE.MeshStandardNodeMaterial({
@@ -198,6 +235,7 @@ export class Renderer3D {
     this.scene.add(this.blocks);
   }
 
+  /** Builds the instanced snake body and the eyed head group. */
   buildSnake() {
     const geo = new RoundedBoxGeometry(CELL * 0.84, CELL * 0.84, CELL * 0.84, 3, CELL * 0.22);
     const mat = new THREE.MeshStandardNodeMaterial({
@@ -224,7 +262,6 @@ export class Renderer3D {
     const pupil = new THREE.MeshStandardNodeMaterial({ color: 0x0a0a0a, roughness: 0.4 });
     const eyeGeo = new THREE.SphereGeometry(CELL * 0.15, 12, 12);
     const pupilGeo = new THREE.SphereGeometry(CELL * 0.08, 10, 10);
-    // Object3D.lookAt points the group's +Z toward travel, so eyes sit on +Z.
     for (const sx of [-1, 1]) {
       const e = new THREE.Mesh(eyeGeo, eyeWhite);
       e.position.set(sx * CELL * 0.24, CELL * 0.16, CELL * 0.42);
@@ -236,6 +273,7 @@ export class Renderer3D {
     this.scene.add(this.head);
   }
 
+  /** Builds the food icosahedron and its wireframe halo. */
   buildFood() {
     const mat = new THREE.MeshStandardNodeMaterial({
       color: config.COLORS.FOOD, roughness: 0.15, metalness: 0.2,
@@ -251,6 +289,7 @@ export class Renderer3D {
     this.foodHalo = halo;
   }
 
+  /** Builds the instanced particle mesh and its free-list particle pool. */
   buildParticles() {
     const geo = new THREE.BoxGeometry(CELL * 0.14, CELL * 0.14, CELL * 0.14);
     const mat = new THREE.MeshBasicNodeMaterial({ color: 0xffffff, transparent: true, opacity: 1 });
@@ -266,6 +305,7 @@ export class Renderer3D {
     }
   }
 
+  /** Sets up the scene pass and bloom post-processing pipeline. */
   buildPostFX() {
     const Pipeline = THREE.RenderPipeline || THREE.PostProcessing;
     this.postProcessing = new Pipeline(this.renderer);
@@ -273,8 +313,10 @@ export class Renderer3D {
     this.postProcessing.outputNode = scenePass.add(bloom(scenePass, 0.7, 0.5, 0.2));
   }
 
-  /* ---------- manual camera rotation ---------- */
-
+  /**
+   * Wires mouse drag and two-finger touch drag to the manual orbit offsets
+   * (single-finger swipe is reserved for steering).
+   */
   setupCameraControls() {
     const el = this.canvas;
     let lastX = 0, lastY = 0;
@@ -291,7 +333,6 @@ export class Renderer3D {
     window.addEventListener('mousemove', (e) => move(e.clientX, e.clientY));
     window.addEventListener('mouseup', end);
 
-    // Two-finger drag rotates (single-finger swipe is reserved for turning).
     el.addEventListener('touchstart', (e) => {
       if (e.touches.length === 2) start((e.touches[0].clientX + e.touches[1].clientX) / 2, (e.touches[0].clientY + e.touches[1].clientY) / 2);
     }, { passive: true });
@@ -301,8 +342,12 @@ export class Renderer3D {
     el.addEventListener('touchend', () => { if (this.dragging) end(); });
   }
 
-  /* ---------- state sync ---------- */
-
+  /**
+   * Resets all interpolated render state to match a fresh game and snaps the
+   * camera behind the snake.
+   * @param {Snake} snake
+   * @param {Grid} grid
+   */
   reset(snake, grid) {
     this.segRender = snake.body.map((s) => this.cellToWorld(s.x, s.y, s.z));
     this.cellToWorld(grid.food.x, grid.food.y, grid.food.z, this.foodTarget);
@@ -312,7 +357,10 @@ export class Renderer3D {
     this.snapCameraBehind(snake);
   }
 
-  /** Reframes the camera directly behind a (re)spawned snake. */
+  /**
+   * Reframes the camera directly behind a (re)spawned snake with no easing.
+   * @param {Snake} snake
+   */
   snapCameraBehind(snake) {
     this.camForward.set(snake.forward.x, snake.forward.y, snake.forward.z);
     this.camUp.set(snake.up.x, snake.up.y, snake.up.z);
@@ -325,22 +373,27 @@ export class Renderer3D {
     this.camera.lookAt(head);
   }
 
+  /**
+   * Repositions the snake instantly on respawn and lets the camera position
+   * glide in, while snapping the camera orientation frame to the new snake.
+   *
+   * The orientation is snapped rather than eased: the spawn frame always points
+   * straight down, and easing from a previous upward heading would lerp through
+   * the antipodal vector, collapse near zero at the midpoint, and normalize into
+   * an arbitrary direction — the random "flip" seen at spawn.
+   * @param {Snake} snake
+   */
   onSnakeRespawned(snake) {
-    // Reposition the snake instantly, and let the camera POSITION glide in so
-    // the view sweeps from the landing spot to the fresh snake.
     this.segRender = snake.body.map((s) => this.cellToWorld(s.x, s.y, s.z));
-
-    // Snap the camera's ORIENTATION frame to the new snake immediately. The
-    // spawn frame always points straight down; if the previous run ended
-    // heading upward, easing camForward/camUp toward it would lerp through the
-    // opposite (antipodal) vector, collapse to ~zero at the midpoint, and
-    // normalize into an arbitrary direction — the random "flip" at spawn.
     this.camForward.set(snake.forward.x, snake.forward.y, snake.forward.z);
     this.camUp.set(snake.up.x, snake.up.y, snake.up.z);
     this.manualYaw = this.manualPitch = 0;
   }
 
-  /** Rebuilds the locked-block instances from the grid. */
+  /**
+   * Rebuilds the locked-block instances from the grid.
+   * @param {Grid} grid
+   */
   syncBlocks(grid) {
     let i = 0;
     for (const [posKey, col] of grid.staticBlocks) {
@@ -359,22 +412,44 @@ export class Renderer3D {
     if (this.blocks.instanceColor) this.blocks.instanceColor.needsUpdate = true;
   }
 
+  /**
+   * Emits a small particle burst at each cleared line cell.
+   * @param {Vec3[]} cells
+   */
   onLinesCleared(cells) {
     for (const c of cells) this.burst(c, config.COLORS.FRAME, 2);
   }
 
+  /**
+   * Extends the interpolated segment trail to match the snake after a step.
+   * @param {Snake} snake
+   */
   onSnakeMoved(snake) {
     const prevHead = this.segRender[0] ? this.segRender[0].clone() : this.cellToWorld(snake.body[0].x, snake.body[0].y, snake.body[0].z);
     this.segRender.unshift(prevHead);
     while (this.segRender.length > snake.body.length) this.segRender.pop();
   }
 
+  /**
+   * Retargets the food interpolation to a new cell.
+   * @param {Vec3} food
+   */
   onFoodMoved(food) {
     this.cellToWorld(food.x, food.y, food.z, this.foodTarget);
   }
 
+  /**
+   * Adds camera shake, capped so repeated hits don't blow up.
+   * @param {number} amount
+   */
   shake(amount) { this.shakeAmt = Math.min(1.4, this.shakeAmt + amount); }
 
+  /**
+   * Spawns a burst of particles from a grid cell, drawing from the free pool.
+   * @param {Vec3} cell Origin cell.
+   * @param {number} colHex Particle color.
+   * @param {number} count Particles requested (limited by the pool).
+   */
   burst(cell, colHex, count) {
     const origin = this.cellToWorld(cell.x, cell.y, cell.z);
     for (let n = 0; n < count; n++) {
@@ -388,8 +463,15 @@ export class Renderer3D {
     }
   }
 
-  /* ---------- draw ---------- */
-
+  /**
+   * Renders one frame: advances animation clocks, updates the snake, food,
+   * particles, and camera, then runs the post-processing pipeline.
+   * @param {Snake} snake
+   * @param {Grid} grid
+   * @param {number} dt Milliseconds since the last frame.
+   * @param {{running: boolean, paused: boolean}} state
+   * @returns {Promise<void>}
+   */
   async render(snake, grid, dt, state) {
     const dts = Math.min(dt, 100) / 1000;
     this.time += dts;
@@ -401,6 +483,15 @@ export class Renderer3D {
     if (p && typeof p.then === 'function') await p;
   }
 
+  /**
+   * Eases the interpolated body toward the snake's cells, draws the tapered
+   * body and head (when visible), and positions the look-ahead target quad on
+   * the first block or wall straight ahead of the heading.
+   * @param {Snake} snake
+   * @param {number} dts Delta time in seconds.
+   * @param {{running: boolean, paused: boolean}} state
+   * @param {Grid} grid
+   */
   updateSnake(snake, dts, state, grid) {
     const body = snake.body;
     const k = state && state.running ? 18 : 10;
@@ -418,8 +509,6 @@ export class Renderer3D {
       this.segRender[i].lerp(target, a);
     }
 
-    // Hidden during the landing view: hold segRender (for the camera) but draw
-    // no snake, so only the locked blocks are visible where you crashed.
     if (!this.snakeVisible) {
       for (let j = 0; j < SNAKE_CAP; j++) this.hideInstance(this.snakeBody, j);
       this.snakeBody.instanceMatrix.needsUpdate = true;
@@ -429,9 +518,6 @@ export class Renderer3D {
     }
     this.head.visible = true;
 
-    // Highlight the first thing straight ahead of the (turn-adjusted) heading:
-    // march cell by cell until a locked block or the wall, then face the quad
-    // onto that block's near face or the wall square.
     if (snake.peekForward) {
       const f = snake.peekForward();
       let cur = snake.getHead(), block = null;
@@ -441,19 +527,17 @@ export class Renderer3D {
         if (grid && grid.staticBlocks.has(`${nxt.x},${nxt.y},${nxt.z}`)) { block = nxt; break; }
         cur = nxt;
       }
-      const eps = CELL * 0.03;   // nudge off the surface so it doesn't z-fight
+      const eps = CELL * 0.03;
       const tc = this.targetCell;
       tc.rotation.set(0, 0, 0);
       if (f.x) tc.rotation.y = Math.PI / 2;
       else if (f.y) tc.rotation.x = Math.PI / 2;
       if (block) {
-        // Sit on the block's face that the snake is approaching.
         tc.position.set((block.x - (GW - 1) / 2) * CELL, (block.y - (GH - 1) / 2) * CELL, (block.z - (GD - 1) / 2) * CELL);
         tc.position.x -= f.x * (CELL / 2 + eps);
         tc.position.y -= f.y * (CELL / 2 + eps);
         tc.position.z -= f.z * (CELL / 2 + eps);
       } else {
-        // No block in the way — land on the wall, keeping the head's row/column.
         const h = snake.getHead();
         tc.position.set((h.x - (GW - 1) / 2) * CELL, (h.y - (GH - 1) / 2) * CELL, (h.z - (GD - 1) / 2) * CELL);
         if (f.x) tc.position.x = f.x > 0 ? HX - eps : -HX + eps;
@@ -490,6 +574,11 @@ export class Renderer3D {
     }
   }
 
+  /**
+   * Eases the food toward its target cell and animates its pulse, spin, halo,
+   * and light.
+   * @param {number} dts Delta time in seconds.
+   */
   updateFood(dts) {
     this.foodPos.lerp(this.foodTarget, 1 - Math.exp(-dts * 10));
     const pulse = 1 + 0.12 * Math.sin(this.time * 4);
@@ -503,6 +592,10 @@ export class Renderer3D {
     this.foodLight.intensity = 4 + 2 * Math.sin(this.time * 4);
   }
 
+  /**
+   * Advances live particles (drag, motion, fade) and hides the rest.
+   * @param {number} dts Delta time in seconds.
+   */
   updateParticles(dts) {
     let count = 0;
     for (const p of this.particles) {
@@ -525,11 +618,16 @@ export class Renderer3D {
     if (this.particleMesh.instanceColor) this.particleMesh.instanceColor.needsUpdate = true;
   }
 
+  /**
+   * Eases the chase camera toward the snake's orientation, applies the manual
+   * orbit offset, aims ahead of the head, and applies decaying shake.
+   * @param {Snake} snake
+   * @param {number} dts Delta time in seconds.
+   */
   updateCamera(snake, dts) {
     const cam = config.CAMERA;
     const head = this.segRender[0] || new THREE.Vector3();
 
-    // Ease the camera frame toward the snake's orientation.
     const a = 1 - Math.exp(-dts * cam.TURN_SMOOTH);
     this.camForward.lerp(new THREE.Vector3(snake.forward.x, snake.forward.y, snake.forward.z), a);
     if (this.camForward.lengthSq() > 1e-6) this.camForward.normalize();
@@ -538,7 +636,6 @@ export class Renderer3D {
 
     const right = new THREE.Vector3().crossVectors(this.camForward, this.camUp).normalize();
 
-    // Base chase offset, then apply manual orbit (yaw about up, pitch about right).
     const rel = this.camForward.clone().multiplyScalar(-cam.DISTANCE)
       .add(this.camUp.clone().multiplyScalar(cam.HEIGHT));
     const q = new THREE.Quaternion()
@@ -561,7 +658,6 @@ export class Renderer3D {
       this.shakeAmt *= Math.max(0, 1 - dts * 6);
     }
 
-    // Ease the manual orbit back toward "behind the snake" when not dragging.
     if (!this.dragging) {
       const decay = Math.exp(-dts * 1.1);
       this.manualYaw *= decay;
@@ -569,6 +665,7 @@ export class Renderer3D {
     }
   }
 
+  /** Resizes the renderer and camera to the current canvas dimensions. */
   resize() {
     const w = this.canvas.clientWidth || window.innerWidth;
     const h = this.canvas.clientHeight || window.innerHeight;

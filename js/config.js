@@ -1,54 +1,65 @@
 /**
- * Game Configuration — 3D Tetrisnake
- * The arena is a tall rectangular "Tetris well" (GRID_W x GRID_D footprint,
- * GRID_H tall). The snake flies freely in all six directions; the camera
- * chases it. Turns are relative to the snake's orientation (like a flight
- * game), so "up" always curves toward screen-up.
+ * Static configuration for 3D Tetrisnake.
+ *
+ * The arena is a tall rectangular "Tetris well" ({@link config.GRID_W} x
+ * {@link config.GRID_D} footprint, {@link config.GRID_H} tall). The snake flies
+ * freely in all six directions and the camera chases it. Turns are relative to
+ * the snake's orientation, so "up" always curves toward screen-up.
+ *
+ * @typedef {Object} Config
+ * @property {number} GRID_W Arena width in cells.
+ * @property {number} GRID_D Arena depth in cells.
+ * @property {number} GRID_H Arena height in cells.
+ * @property {number} CELL World units per cell.
+ * @property {Object} COLORS Hex colors for each rendered element.
+ * @property {Object} SPEEDS Movement timing, in milliseconds unless noted.
+ * @property {Object} CAMERA Chase-camera geometry and smoothing, in world units.
+ * @property {Object} SCORING Point values and level pacing.
+ * @property {Object} MOBILE Touch-input thresholds.
  */
+
+/** @type {Config} */
 export const config = {
-  // Arena dimensions (cells) — footprint x height (a tall Tetris well)
   GRID_W: 12,
   GRID_D: 12,
   GRID_H: 28,
 
-  CELL: 1, // world units per cell
+  CELL: 1,
 
   COLORS: {
-    SNAKE: 0x27d94b,   // snake body (green)
-    HEAD: 0x8bffa3,    // snake head highlight
-    BLOCK: 0xff7a1a,   // locked blocks (orange)
-    FOOD: 0xff3d7f,    // food (pink)
-    GRID: 0x2a2a55,    // wall grid lines
-    FRAME: 0x5a6cff,   // cube frame glow
+    SNAKE: 0x27d94b,
+    HEAD: 0x8bffa3,
+    BLOCK: 0xff7a1a,
+    FOOD: 0xff3d7f,
+    GRID: 0x2a2a55,
+    FRAME: 0x5a6cff,
     BG_TOP: 0x0b0b1e,
     BG_BOTTOM: 0x02020a
   },
 
-  // Movement timing (ms per grid step) — steady speed, gently faster by level
   SPEEDS: {
-    MOVE_DELAY: 240,       // base step delay
-    MIN_DELAY: 120,        // fastest it ever gets
-    LEVEL_STEP: 8,         // ms shaved per level
-    LENGTH_STEP: 1.5,      // ms shaved per body segment
-    BOOST_MULT: 3,         // speed multiplier while Shift is held
-    LANDING_PAUSE: 1200,   // hold on the locked blocks so you see where you landed
-    RESPAWN_PAUSE: 900,    // grace pause before a new snake starts moving
-    START_PAUSE: 900       // grace pause at the start of a game
+    MOVE_DELAY: 240,
+    MIN_DELAY: 120,
+    LEVEL_STEP: 8,
+    LENGTH_STEP: 1.5,
+    BOOST_MULT: 3,
+    LANDING_PAUSE: 1200,
+    RESPAWN_PAUSE: 900,
+    START_PAUSE: 900
   },
 
-  // Chase camera (in world units)
   CAMERA: {
-    DISTANCE: 5.5,   // behind the head
-    HEIGHT: 2.0,     // above the head (along the snake's up)
-    LOOK_AHEAD: 3,   // look this far ahead of the head
-    SMOOTH: 6,       // position smoothing rate
-    TURN_SMOOTH: 9   // orientation smoothing rate
+    DISTANCE: 5.5,
+    HEIGHT: 2.0,
+    LOOK_AHEAD: 3,
+    SMOOTH: 6,
+    TURN_SMOOTH: 9
   },
 
   SCORING: {
-    FOOD: 10,               // * level per food
-    LINE: 50,               // * level * lines for a line clear
-    BLOCKS_PER_LEVEL: 40    // landed blocks to advance a level
+    FOOD: 10,
+    LINE: 50,
+    BLOCKS_PER_LEVEL: 40
   },
 
   MOBILE: {

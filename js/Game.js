@@ -7,12 +7,16 @@ import { AudioManager } from './AudioManager.js';
 import { Renderer3D } from './Renderer3D.js';
 
 /**
- * Game (3D free-flight snake)
- * Owns state and the fixed-timestep simulation. The snake flies through the
- * cube; the camera (in Renderer3D) chases it. Hitting a wall or itself ends the
- * game; eating food grows the snake and raises the level.
+ * Owns game state and the fixed-timestep simulation for the 3D free-flight
+ * snake. The snake flies through the well while {@link Renderer3D}'s chase
+ * camera follows it. Crashing into a wall, a block, or itself locks the snake
+ * into blocks and drops a new one; a full line clears; it is game over only
+ * when a fresh snake has no room to spawn.
  */
 export class Game {
+  /**
+   * @param {string} canvasId Id of the canvas element to render into.
+   */
   constructor(canvasId) {
     this.canvas = document.getElementById(canvasId);
     this.snake = new Snake();
@@ -33,20 +37,28 @@ export class Game {
     this.paused = false;
     this.running = false;
     this.pausePressed = false;
-    this._boosting = false;    // whether Shift-accelerate is currently held
+    /** @type {boolean} Whether Shift-accelerate is currently held. */
+    this._boosting = false;
 
     this.lastFrameTime = 0;
     this.accumulator = 0;
     this.rendering = false;
-    this.stepPauseUntil = 0;  // simulation is frozen until this timestamp
+    /** @type {number} Timestamp until which the simulation stays frozen. */
+    this.stepPauseUntil = 0;
     this.pendingRespawn = false;
-    this.landingUntil = 0;    // hold on the landing spot until this timestamp
+    /** @type {number} Timestamp until which the landing view is held. */
+    this.landingUntil = 0;
 
     this.bindEvents();
     this.ui.updateSoundButtonText();
     this.ui.updateMusicButtonText();
   }
 
+  /**
+   * Initializes the renderer, resets state, shows the menu, and starts the
+   * render loop.
+   * @returns {Promise<void>}
+   */
   async init() {
     await this.renderer.init();
     this.reset();
@@ -54,6 +66,7 @@ export class Game {
     this.startRenderLoop();
   }
 
+  /** Wires window and UI callbacks to game actions. */
   bindEvents() {
     window.addEventListener('resize', () => this.renderer.resize());
     this.ui.onStartGame(() => { this.ui.hideMainMenu(); this.ui.showMobileControls(); this.ui.showHUD(); this.start(); });
@@ -64,6 +77,7 @@ export class Game {
     this.ui.onMusicToggle(() => this.audioManager.toggleMusic());
   }
 
+  /** Resets state, starts music, and begins a new run after a grace pause. */
   start() {
     this.reset();
     this.audioManager.startBackgroundMusic();
@@ -73,6 +87,7 @@ export class Game {
     this.stepPauseUntil = performance.now() + config.SPEEDS.START_PAUSE;
   }
 
+  /** Clears score/level/state, respawns the snake and food, and syncs render state. */
   reset() {
     this.score = 0;
     this.level = 1;
@@ -89,6 +104,11 @@ export class Game {
     this.renderer.reset(this.snake, this.grid);
   }
 
+  /**
+   * Drives the requestAnimationFrame loop: handles input, advances the
+   * simulation when running, and renders each frame, skipping frames still
+   * awaiting the previous async render.
+   */
   startRenderLoop() {
     const frame = async (now) => {
       if (this.rendering) { requestAnimationFrame(frame); return; }
@@ -108,6 +128,7 @@ export class Game {
     requestAnimationFrame(frame);
   }
 
+  /** Polls the input handler for pause, quit, boost, and steering each frame. */
   handleInput() {
     if (this.inputHandler.isPausePressed()) {
       if (!this.pausePressed && this.running && !this.gameOver) {
@@ -134,20 +155,23 @@ export class Game {
     }
   }
 
-  /** Current speed multiplier — boosted while Shift is held. */
+  /** @returns {number} Current speed multiplier — boosted while Shift is held. */
   get speedMult() { return this.inputHandler.isBoosting() ? config.SPEEDS.BOOST_MULT : 1; }
 
+  /**
+   * Advances the fixed-timestep simulation, honoring the respawn/landing hold
+   * and the start/respawn grace pause, then running as many ticks as the
+   * accumulated time allows.
+   * @param {number} dt Milliseconds since the last frame.
+   */
   updateSimulation(dt) {
     const now = performance.now();
 
-    // After a crash, hold on the locked blocks for a beat, then bring in the
-    // new snake (camera swoops from the landing spot to the fresh snake).
     if (this.pendingRespawn) {
       if (now >= this.landingUntil) this.doRespawn();
       else { this.accumulator = 0; return; }
     }
 
-    // Grace pause before the snake starts moving.
     if (now < this.stepPauseUntil) { this.accumulator = 0; return; }
 
     this.accumulator += dt;
@@ -161,16 +185,17 @@ export class Game {
     }
   }
 
+  /**
+   * Runs one simulation step: applies a buffered turn, resolves collisions
+   * (which lock the snake) or eating, and advances the snake.
+   */
   tick() {
-    // Consume at most one buffered turn per step.
     const turn = this.inputHandler.consumeTurn();
     if (turn) this.snake.queueTurn(turn);
 
     const nh = this.snake.peekHead();
     const eating = this.grid.isFood(nh.x, nh.y, nh.z);
 
-    // Original rule: hitting a wall, a block, or yourself LOCKS the snake into
-    // blocks and spawns a new one — it is not an instant loss.
     const hitsWall = this.grid.isOutOfBounds(nh.x, nh.y, nh.z);
     const hitsBlock = !hitsWall && this.grid.isStaticBlock(nh.x, nh.y, nh.z);
     const hitsSelf = !hitsWall && this.snake.isCollidingWith(nh.x, nh.y, nh.z, !eating);
@@ -183,6 +208,10 @@ export class Game {
     else this.audioManager.play('move');
   }
 
+  /**
+   * Locks the crashed snake into blocks, clears any completed lines, updates
+   * level/score, and starts the landing hold before a respawn.
+   */
   handleLock() {
     this.audioManager.play('collision');
     this.renderer.shake(0.5);
@@ -205,21 +234,22 @@ export class Game {
     }
     this.ui.updateHUD(this.score, this.level);
 
-    // Hide the snake and hold the camera on the landed blocks so the player
-    // sees the result; doRespawn() brings in the new snake after the pause.
     this.renderer.setSnakeVisible(false);
     this.pendingRespawn = true;
     this.landingUntil = performance.now() + config.SPEEDS.LANDING_PAUSE;
     this.accumulator = 0;
   }
 
+  /**
+   * Brings in a fresh snake after the landing hold, ending the game if the
+   * spawn cells are already occupied.
+   */
   doRespawn() {
     this.pendingRespawn = false;
     this.snake.spawn();
-    this.renderer.onSnakeRespawned(this.snake); // camera glides in (no snap)
+    this.renderer.onSnakeRespawned(this.snake);
     this.renderer.setSnakeVisible(true);
 
-    // Game over only if the new snake has no room to spawn.
     if (this.snake.body.some((s) => this.grid.isStaticBlock(s.x, s.y, s.z))) {
       this.endGame();
       return;
@@ -228,6 +258,10 @@ export class Game {
     this.accumulator = 0;
   }
 
+  /**
+   * Handles eating food: scores, grows level intensity, and spawns new food.
+   * @param {import('./Snake.js').Vec3} cell The eaten food cell.
+   */
   handleFoodEaten(cell) {
     this.audioManager.play('eat');
     this.foodEaten++;
@@ -243,6 +277,7 @@ export class Game {
     this.renderer.onFoodMoved(this.grid.food);
   }
 
+  /** Ends the game: stops music, plays effects, and shows the game-over screen. */
   endGame() {
     this.gameOver = true;
     this.running = false;
@@ -253,6 +288,7 @@ export class Game {
     this.ui.showGameOver(this.score, this.level);
   }
 
+  /** Stops the game and returns to the main menu. */
   quitToMainMenu() {
     this.running = false;
     this.paused = false;

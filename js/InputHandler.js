@@ -1,25 +1,33 @@
 import { config } from './config.js';
 
 /**
- * InputHandler (3D)
- * Maps arrow keys, WASD, on-screen buttons, and swipes to RELATIVE turns
- * (left/right/up/down) applied to the snake's orientation frame.
+ * @typedef {import('./Snake.js').Turn} Turn
+ */
+
+/**
+ * Translates keyboard, on-screen buttons, and touch gestures into relative
+ * snake turns ('left' | 'right' | 'up' | 'down'), and exposes the held state of
+ * the pause, quit, boost, and steering inputs.
  */
 export class InputHandler {
   constructor() {
+    /** @type {Map<string, boolean>} Held state, keyed by lowercased key/tag. */
     this.keyState = new Map();
+    /** @type {Turn[]} Pending turns, most recent last. */
     this.inputBuffer = [];
     this.maxBufferSize = 2;
+    /** @type {{x: number, y: number}|null} Origin of an in-progress swipe. */
     this.touchStartPos = null;
     this.swipeThreshold = config.MOBILE.SWIPE_THRESHOLD;
     this.isMobile = this.detectMobile();
 
-    // Physical key -> relative turn.
+    /** @type {Object<string, Turn>} Physical key -> relative turn. */
     this.keyToTurn = {
       ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
       w: 'up', s: 'down', a: 'left', d: 'right',
       W: 'up', S: 'down', A: 'left', D: 'right'
     };
+    /** @type {Object<Turn, Turn>} Opposite of each turn. */
     this.opposite = { up: 'down', down: 'up', left: 'right', right: 'left' };
 
     this.setupEventListeners();
@@ -30,18 +38,19 @@ export class InputHandler {
     }, { capture: true });
   }
 
+  /** @returns {boolean} Whether the current device looks touch-driven. */
   detectMobile() {
     return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
       ('ontouchstart' in window) ||
       (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
   }
 
+  /** Wires up keyboard listeners for turns, pause, quit, and boost. */
   setupEventListeners() {
     document.addEventListener('keydown', (e) => {
       const k = e.key;
       const lower = k.toLowerCase();
       if (this.keyToTurn[k] || lower === 'p' || lower === 'q' || lower === 'shift') {
-        // Holding Shift accelerates the snake (see isBoosting).
         this.keyState.set(lower, true);
         if (this.keyToTurn[k]) this.bufferTurn(this.keyToTurn[k]);
       }
@@ -52,6 +61,10 @@ export class InputHandler {
     window.addEventListener('blur', () => { this.keyState.clear(); this.inputBuffer = []; });
   }
 
+  /**
+   * Appends a turn to the buffer, coalescing repeats and capping its length.
+   * @param {Turn} turn
+   */
   bufferTurn(turn) {
     const last = this.inputBuffer.length ? this.inputBuffer[this.inputBuffer.length - 1] : null;
     if (turn !== last) {
@@ -60,6 +73,7 @@ export class InputHandler {
     }
   }
 
+  /** Wires up the on-screen D-pad, pause button, and swipe gestures. */
   setupTouchControls() {
     const map = { upBtn: 'up', downBtn: 'down', leftBtn: 'left', rightBtn: 'right' };
     Object.entries(map).forEach(([id, turn]) => {
@@ -99,7 +113,11 @@ export class InputHandler {
     }
   }
 
-  /** A discrete tap (touch/swipe): buffer the turn and pulse the active key. */
+  /**
+   * Handles a discrete tap or swipe: buffers the turn, pulses the matching
+   * steering flag, and fires haptics on mobile.
+   * @param {Turn} turn
+   */
   tapTurn(turn) {
     if (this.isMobile && 'vibrate' in navigator) navigator.vibrate(15);
     this.bufferTurn(turn);
@@ -107,17 +125,21 @@ export class InputHandler {
     setTimeout(() => this.keyState.set('__' + turn, false), 120);
   }
 
+  /**
+   * @param {string} k
+   * @returns {boolean} Whether the given key/tag is currently held.
+   */
   isKeyPressed(k) { return this.keyState.get(k) || false; }
 
   /**
-   * The most recent buffered turn (consumed once, so a tap turns exactly once).
-   * Also reports whether a movement key is currently held (for acceleration).
+   * Removes and returns the oldest buffered turn so a tap turns exactly once.
+   * @returns {Turn|null}
    */
   consumeTurn() {
     return this.inputBuffer.length ? this.inputBuffer.shift() : null;
   }
 
-  /** True while any movement input is held (drives speed-up). */
+  /** @returns {boolean} Whether any steering input is currently held. */
   isSteering() {
     for (const t of ['up', 'down', 'left', 'right']) {
       if (this.isKeyPressed('__' + t)) return true;
@@ -128,9 +150,12 @@ export class InputHandler {
     return false;
   }
 
-  /** True while Shift is held — accelerates the snake. */
+  /** @returns {boolean} Whether Shift (boost) is held. */
   isBoosting() { return this.isKeyPressed('shift'); }
 
+  /** @returns {boolean} Whether the pause input is active. */
   isPausePressed() { return this.isKeyPressed('p'); }
+
+  /** @returns {boolean} Whether the quit input is active. */
   isQuitPressed() { return this.isKeyPressed('q'); }
 }

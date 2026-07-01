@@ -1,10 +1,11 @@
-/**
- * Application entry point.
- * Boots the 3D WebGPU game once the DOM is ready and reports fatal errors
- * (e.g. no WebGPU/WebGL2 support) to the user instead of failing silently.
- */
 import { Game } from './Game.js';
 
+/**
+ * Boots the game once the DOM is ready, hides the loading overlay on success,
+ * and reports fatal errors (such as missing WebGPU/WebGL2 support) in place of
+ * the overlay rather than failing silently.
+ * @returns {Promise<void>}
+ */
 async function boot() {
   const loading = document.getElementById('loading');
   try {
