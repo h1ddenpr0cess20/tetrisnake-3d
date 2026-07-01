@@ -29,17 +29,18 @@ export class Snake {
 
   spawn() {
     const cx = Math.floor(config.GRID_W / 2);
-    const cy = Math.floor(config.GRID_H / 2);
     const cz = Math.floor(config.GRID_D / 2);
-    this.forward = { x: 1, y: 0, z: 0 };
-    this.up = { x: 0, y: 1, z: 0 };
+    const topY = config.GRID_H - 1;
+    // Enter from the top of the well, dropping downward.
+    this.forward = { x: 0, y: -1, z: 0 };
+    this.up = { x: 0, y: 0, z: 1 };
     this.pendingTurn = null;
 
     const len = 3;
     this.body = [];
-    // Head at center; body trails behind (opposite forward).
+    // Head leads downward (lowest y); the tail sits at the top edge.
     for (let i = 0; i < len; i++) {
-      this.body.push({ x: cx - i, y: cy, z: cz });
+      this.body.push({ x: cx, y: topY - (len - 1) + i, z: cz });
     }
     this.activeDirectionKey = null;
     this.keyHoldStart = 0;
