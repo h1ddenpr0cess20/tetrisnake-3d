@@ -13,12 +13,13 @@ test('detectMobile is false on a desktop-like environment', () => {
   assert.equal(h.isMobile, false);
 });
 
-test('keyToTurn and opposite maps are complete', () => {
+test('keyToTurn maps arrows and WASD (both cases) to relative turns', () => {
   const h = new InputHandler();
   assert.equal(h.keyToTurn.ArrowUp, 'up');
+  assert.equal(h.keyToTurn.ArrowDown, 'down');
   assert.equal(h.keyToTurn.a, 'left');
   assert.equal(h.keyToTurn.D, 'right');
-  assert.deepEqual(h.opposite, { up: 'down', down: 'up', left: 'right', right: 'left' });
+  assert.equal(h.keyToTurn.W, 'up');
 });
 
 test('bufferTurn coalesces consecutive duplicates', () => {
@@ -45,13 +46,12 @@ test('consumeTurn returns turns oldest-first, then null', () => {
   assert.equal(h.consumeTurn(), null);
 });
 
-test('a keydown buffers the mapped turn and marks steering', () => {
+test('a keydown buffers the mapped turn', () => {
   const h = new InputHandler();
   stubs.fireKeydown('ArrowLeft');
   assert.equal(h.consumeTurn(), 'left');
-  assert.equal(h.isSteering(), true);
-  stubs.fireKeyup('ArrowLeft');
-  assert.equal(h.isSteering(), false);
+  stubs.fireKeydown('w');
+  assert.equal(h.consumeTurn(), 'up');
 });
 
 test('boost, pause, and quit reflect their held keys', () => {

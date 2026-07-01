@@ -150,8 +150,6 @@ export class Game {
         this._boosting = boosting;
         this.ui.updateHUD(this.score, this.level, this.speedMult);
       }
-      if (this.inputHandler.isSteering()) this.snake.setActiveDirection('steer', performance.now());
-      else this.snake.clearActiveDirection();
     }
   }
 

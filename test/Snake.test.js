@@ -139,15 +139,3 @@ test('isCollidingWith ignores the head and optionally the moving tail', () => {
   assert.equal(s.isCollidingWith(tail.x, tail.y, tail.z, true), false);
   assert.equal(s.isCollidingWith(tail.x, tail.y, tail.z, false), true);
 });
-
-test('setActiveDirection resets the hold timer only on change', () => {
-  const s = new Snake();
-  s.setActiveDirection('steer', 100);
-  assert.equal(s.activeDirectionKey, 'steer');
-  assert.equal(s.keyHoldStart, 100);
-  s.setActiveDirection('steer', 200);
-  assert.equal(s.keyHoldStart, 100);
-  s.clearActiveDirection();
-  assert.equal(s.activeDirectionKey, null);
-  assert.equal(s.keyHoldStart, 0);
-});

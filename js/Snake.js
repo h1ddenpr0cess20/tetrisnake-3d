@@ -41,10 +41,6 @@ export class Snake {
     this.up = { x: 0, y: 1, z: 0 };
     /** @type {Turn|null} Turn buffered for the next step. */
     this.pendingTurn = null;
-    /** @type {string|null} Key currently steering the snake, if any. */
-    this.activeDirectionKey = null;
-    this.keyHoldStart = 0;
-    this.lastUpdateTime = 0;
   }
 
   /**
@@ -64,9 +60,6 @@ export class Snake {
     for (let i = 0; i < len; i++) {
       this.body.push({ x: cx, y: topY - (len - 1) + i, z: cz });
     }
-    this.activeDirectionKey = null;
-    this.keyHoldStart = 0;
-    this.lastUpdateTime = 0;
   }
 
   /** @returns {Vec3} The head cell. */
@@ -131,7 +124,6 @@ export class Snake {
     const newHead = { x: h.x + this.forward.x, y: h.y + this.forward.y, z: h.z + this.forward.z };
     this.body.unshift(newHead);
     if (!eatFood) this.body.pop();
-    this.lastUpdateTime = performance.now();
     return newHead;
   }
 
@@ -148,24 +140,6 @@ export class Snake {
       MIN_DELAY,
       MOVE_DELAY - Math.min(level - 1, 12) * LEVEL_STEP - extra * LENGTH_STEP
     );
-  }
-
-  /**
-   * Records which key is steering the snake, resetting the hold timer on change.
-   * @param {string} key
-   * @param {number} timestamp
-   */
-  setActiveDirection(key, timestamp) {
-    if (this.activeDirectionKey !== key) {
-      this.activeDirectionKey = key;
-      this.keyHoldStart = timestamp;
-    }
-  }
-
-  /** Clears any active steering key. */
-  clearActiveDirection() {
-    this.activeDirectionKey = null;
-    this.keyHoldStart = 0;
   }
 
   /**

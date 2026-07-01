@@ -27,8 +27,6 @@ export class InputHandler {
       w: 'up', s: 'down', a: 'left', d: 'right',
       W: 'up', S: 'down', A: 'left', D: 'right'
     };
-    /** @type {Object<Turn, Turn>} Opposite of each turn. */
-    this.opposite = { up: 'down', down: 'up', left: 'right', right: 'left' };
 
     this.setupEventListeners();
     this.setupTouchControls();
@@ -114,15 +112,13 @@ export class InputHandler {
   }
 
   /**
-   * Handles a discrete tap or swipe: buffers the turn, pulses the matching
-   * steering flag, and fires haptics on mobile.
+   * Handles a discrete tap or swipe: buffers the turn and fires haptics on
+   * mobile.
    * @param {Turn} turn
    */
   tapTurn(turn) {
     if (this.isMobile && 'vibrate' in navigator) navigator.vibrate(15);
     this.bufferTurn(turn);
-    this.keyState.set('__' + turn, true);
-    setTimeout(() => this.keyState.set('__' + turn, false), 120);
   }
 
   /**
@@ -137,17 +133,6 @@ export class InputHandler {
    */
   consumeTurn() {
     return this.inputBuffer.length ? this.inputBuffer.shift() : null;
-  }
-
-  /** @returns {boolean} Whether any steering input is currently held. */
-  isSteering() {
-    for (const t of ['up', 'down', 'left', 'right']) {
-      if (this.isKeyPressed('__' + t)) return true;
-    }
-    for (const k of ['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 'a', 's', 'd']) {
-      if (this.isKeyPressed(k)) return true;
-    }
-    return false;
   }
 
   /** @returns {boolean} Whether Shift (boost) is held. */
