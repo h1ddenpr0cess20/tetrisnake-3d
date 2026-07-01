@@ -6,12 +6,11 @@ import { UI } from './UI.js';
 import { AudioManager } from './AudioManager.js';
 import { Renderer3D } from './Renderer3D.js';
 
-const DOWN = { x: 0, y: -1, z: 0 };
-
 /**
- * Game (3D)
- * Core controller: owns state, the fixed-timestep simulation, input handling,
- * and coordination between the model (Snake/Grid) and the WebGPU renderer.
+ * Game (3D free-flight snake)
+ * Owns state and the fixed-timestep simulation. The snake flies through the
+ * cube; the camera (in Renderer3D) chases it. Hitting a wall or itself ends the
+ * game; eating food grows the snake and raises the level.
  */
 export class Game {
   constructor(canvasId) {
@@ -29,6 +28,7 @@ export class Game {
 
     this.score = 0;
     this.level = 1;
+    this.foodEaten = 0;
     this.gameOver = false;
     this.paused = false;
     this.running = false;
@@ -45,7 +45,6 @@ export class Game {
 
   async init() {
     await this.renderer.init();
-    // Show a live (non-playing) well behind the main menu.
     this.reset();
     this.ui.showMainMenu();
     this.startRenderLoop();
@@ -55,11 +54,7 @@ export class Game {
     window.addEventListener('resize', () => this.renderer.resize());
     this.ui.onStartGame(() => { this.ui.hideMainMenu(); this.ui.showMobileControls(); this.ui.showHUD(); this.start(); });
     this.ui.onRestartGame(() => { this.ui.hideGameOver(); this.ui.showMobileControls(); this.ui.showHUD(); this.start(); });
-    this.ui.onResumeGame(() => {
-      this.paused = false;
-      this.ui.togglePauseMenu(false);
-      this.audioManager.resumeBackgroundMusic();
-    });
+    this.ui.onResumeGame(() => { this.paused = false; this.ui.togglePauseMenu(false); this.audioManager.resumeBackgroundMusic(); });
     this.ui.onQuitToMenu(() => this.quitToMainMenu());
     this.ui.onSoundToggle(() => this.audioManager.toggleMute());
     this.ui.onMusicToggle(() => this.audioManager.toggleMusic());
@@ -76,6 +71,7 @@ export class Game {
   reset() {
     this.score = 0;
     this.level = 1;
+    this.foodEaten = 0;
     this.gameOver = false;
     this.paused = false;
     this.grid.reset();
@@ -85,22 +81,17 @@ export class Game {
     this.renderer.reset(this.snake, this.grid);
   }
 
-  /** Kicks off a continuous async render/update loop (WebGPU render is async). */
   startRenderLoop() {
     const frame = async (now) => {
       if (this.rendering) { requestAnimationFrame(frame); return; }
       this.rendering = true;
-
       const dt = Math.min(now - (this.lastFrameTime || now), 100);
       this.lastFrameTime = now;
 
       this.handleInput();
-      if (this.running && !this.paused && !this.gameOver) {
-        this.updateSimulation(dt);
-      }
+      if (this.running && !this.paused && !this.gameOver) this.updateSimulation(dt);
       await this.renderer.render(this.snake, this.grid, dt, {
-        running: this.running && !this.gameOver,
-        paused: this.paused
+        running: this.running && !this.gameOver, paused: this.paused
       });
 
       this.rendering = false;
@@ -122,14 +113,10 @@ export class Game {
       this.pausePressed = false;
     }
 
-    if (this.paused && this.inputHandler.isQuitPressed()) {
-      this.quitToMainMenu();
-      return;
-    }
+    if (this.paused && this.inputHandler.isQuitPressed()) { this.quitToMainMenu(); return; }
 
     if (this.running && !this.paused && !this.gameOver) {
-      const input = this.inputHandler.getDirection();
-      if (input) this.snake.setActiveDirection(input.key, performance.now());
+      if (this.inputHandler.isSteering()) this.snake.setActiveDirection('steer', performance.now());
       else this.snake.clearActiveDirection();
     }
   }
@@ -138,7 +125,7 @@ export class Game {
     this.accumulator += dt;
     let guard = 0;
     let delay = this.snake.computeDelay(this.level);
-    while (this.accumulator >= delay && guard++ < 10) {
+    while (this.accumulator >= delay && guard++ < 8) {
       this.accumulator -= delay;
       this.tick();
       if (this.gameOver || this.paused) { this.accumulator = 0; break; }
@@ -146,87 +133,35 @@ export class Game {
     }
   }
 
-  /** One simulation step: resolve steer-or-fall, collisions, food, and locking. */
   tick() {
-    const head = this.snake.getHead();
-    const neck = this.snake.getNeck();
+    // Consume at most one buffered turn per step.
+    const turn = this.inputHandler.consumeTurn();
+    if (turn) this.snake.queueTurn(turn);
 
-    // Decide direction: steer horizontally if a valid key is held, else fall.
-    let dir = DOWN;
-    const input = this.inputHandler.getDirection();
-    if (input) {
-      const d = input.direction;
-      const nx = head.x + d.x, ny = head.y + d.y, nz = head.z + d.z;
-      const isReversal = neck && nx === neck.x && ny === neck.y && nz === neck.z;
-      const outside = this.grid.isOutsideXZ(nx, nz);
-      // A valid steer stays in-bounds and doesn't back into the neck; else fall.
-      if (!isReversal && !outside) dir = d;
-    }
+    const nh = this.snake.peekHead();
 
-    const nx = head.x + dir.x, ny = head.y + dir.y, nz = head.z + dir.z;
+    if (this.grid.isOutOfBounds(nh.x, nh.y, nh.z)) { this.endGame(); return; }
 
-    // Landing on the floor, or crashing into a block or own body => lock.
-    const hitFloor = ny < 0;
-    const hitBlock = !hitFloor && this.grid.isStaticBlock(nx, ny, nz);
-    const hitSelf = !hitFloor && this.snake.isCollidingWith(nx, ny, nz, true);
+    const eating = this.grid.isFood(nh.x, nh.y, nh.z);
+    if (this.snake.isCollidingWith(nh.x, nh.y, nh.z, !eating)) { this.endGame(); return; }
 
-    if (hitFloor || hitBlock || hitSelf) {
-      this.handleLock();
-      return;
-    }
-
-    const eating = this.grid.isFood(nx, ny, nz);
-    this.snake.move(dir, eating);
+    this.snake.step(eating);
     this.renderer.onSnakeMoved(this.snake);
 
-    if (eating) {
-      this.handleFoodEaten(nx, ny, nz);
-    } else {
-      this.audioManager.play('move');
-    }
+    if (eating) this.handleFoodEaten(nh);
+    else this.audioManager.play('move');
   }
 
-  handleLock() {
-    this.audioManager.play('collision');
-    this.renderer.shake(0.55);
-
-    const locked = this.grid.lockSnake(this.snake);
-    this.renderer.addBlocks(locked);
-    this.renderer.burst(this.snake.getHead(), config.COLORS.BLOCK, 14);
-
-    const result = this.grid.clearLayers();
-    if (result.cleared > 0) {
-      this.audioManager.play('lineClear');
-      this.score += config.SCORING.LAYER * this.level * result.cleared * result.cleared;
-      this.renderer.onLayersCleared(result.layers);
-      this.renderer.shake(0.35 + 0.25 * result.cleared);
-    }
-    this.renderer.syncBlocks(this.grid);
-
-    this.level = 1 + Math.floor(this.grid.landedBlocks / config.SCORING.BLOCKS_PER_LEVEL);
-    if (this.level >= 5 && !this.audioManager.isMusicMuted) {
-      this.audioManager.changeBackgroundMusic(this.level);
-    }
-    this.ui.updateHUD(this.score, this.level);
-
-    this.snake.spawn();
-    this.renderer.onSnakeRespawned(this.snake);
-
-    // Game over if the freshly spawned snake overlaps existing blocks.
-    if (this.snake.body.some((s) => s.y < config.GRID_H && this.grid.isStaticBlock(s.x, s.y, s.z))) {
-      this.endGame();
-    }
-  }
-
-  handleFoodEaten(x, y, z) {
+  handleFoodEaten(cell) {
     this.audioManager.play('eat');
+    this.foodEaten++;
     this.score += config.SCORING.FOOD * this.level;
+    this.level = 1 + Math.floor(this.foodEaten / config.SCORING.FOOD_PER_LEVEL);
     this.ui.updateHUD(this.score, this.level);
-    this.renderer.burst({ x, y, z }, config.COLORS.FOOD, 22);
+    this.renderer.burst(cell, config.COLORS.FOOD, 24);
 
-    if (!this.audioManager.isMusicMuted && this.snake.body.length > 1) {
-      const lengthLevel = 1 + this.snake.body.length / 8;
-      this.audioManager.changeBackgroundMusic(Math.max(this.level, lengthLevel));
+    if (!this.audioManager.isMusicMuted && this.snake.body.length > 3) {
+      this.audioManager.changeBackgroundMusic(Math.max(this.level, 1 + this.snake.body.length / 8));
     }
 
     this.grid.spawnFood(this.snake);
@@ -238,7 +173,8 @@ export class Game {
     this.running = false;
     this.audioManager.play('gameOver');
     this.audioManager.stopBackgroundMusic();
-    this.renderer.shake(0.8);
+    this.renderer.shake(0.9);
+    this.renderer.burst(this.snake.getHead(), config.COLORS.SNAKE, 30);
     this.ui.showGameOver(this.score, this.level);
   }
 

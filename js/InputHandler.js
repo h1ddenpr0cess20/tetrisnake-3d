@@ -2,8 +2,8 @@ import { config } from './config.js';
 
 /**
  * InputHandler (3D)
- * Maps keyboard, touch buttons, and swipe gestures to horizontal steer
- * directions in the X/Z plane. The snake falls on its own; input only steers.
+ * Maps arrow keys, WASD, on-screen buttons, and swipes to RELATIVE turns
+ * (left/right/up/down) applied to the snake's orientation frame.
  */
 export class InputHandler {
   constructor() {
@@ -14,25 +14,19 @@ export class InputHandler {
     this.swipeThreshold = config.MOBILE.SWIPE_THRESHOLD;
     this.isMobile = this.detectMobile();
 
-    // Arrow keys steer horizontally: Left/Right = X, Up/Down = Z (depth).
-    this.directionMapping = {
-      ArrowUp: { x: 0, y: 0, z: -1 },
-      ArrowDown: { x: 0, y: 0, z: 1 },
-      ArrowLeft: { x: -1, y: 0, z: 0 },
-      ArrowRight: { x: 1, y: 0, z: 0 }
+    // Physical key -> relative turn.
+    this.keyToTurn = {
+      ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
+      w: 'up', s: 'down', a: 'left', d: 'right',
+      W: 'up', S: 'down', A: 'left', D: 'right'
     };
-    this.oppositeDirections = {
-      ArrowUp: 'ArrowDown', ArrowDown: 'ArrowUp',
-      ArrowLeft: 'ArrowRight', ArrowRight: 'ArrowLeft'
-    };
+    this.opposite = { up: 'down', down: 'up', left: 'right', right: 'left' };
 
     this.setupEventListeners();
     this.setupTouchControls();
 
     window.addEventListener('keydown', (e) => {
-      if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
-        e.preventDefault();
-      }
+      if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
     }, { capture: true });
   }
 
@@ -45,56 +39,40 @@ export class InputHandler {
   setupEventListeners() {
     document.addEventListener('keydown', (e) => {
       const k = e.key;
-      if (this.directionMapping[k] || k.toLowerCase() === 'p' || k.toLowerCase() === 'q') {
-        this.keyState.set(k, true);
-        if (this.directionMapping[k]) this.bufferKey(k);
+      const lower = k.toLowerCase();
+      if (this.keyToTurn[k] || lower === 'p' || lower === 'q') {
+        this.keyState.set(lower, true);
+        if (this.keyToTurn[k]) this.bufferTurn(this.keyToTurn[k]);
       }
     });
     document.addEventListener('keyup', (e) => {
-      this.keyState.set(e.key, false);
-      if (this.directionMapping[e.key]) {
-        this.inputBuffer = this.inputBuffer.filter((key) => key !== e.key);
-      }
+      this.keyState.set(e.key.toLowerCase(), false);
     });
-    window.addEventListener('blur', () => {
-      this.keyState.clear();
-      this.inputBuffer = [];
-    });
+    window.addEventListener('blur', () => { this.keyState.clear(); this.inputBuffer = []; });
   }
 
-  bufferKey(key) {
-    const lastKey = this.inputBuffer.length ? this.inputBuffer[this.inputBuffer.length - 1] : null;
-    const oppKey = lastKey ? this.oppositeDirections[lastKey] : null;
-    if (key !== lastKey && key !== oppKey) {
-      this.inputBuffer = this.inputBuffer.filter((kk) => kk !== key);
-      this.inputBuffer.push(key);
+  bufferTurn(turn) {
+    const last = this.inputBuffer.length ? this.inputBuffer[this.inputBuffer.length - 1] : null;
+    if (turn !== last) {
+      this.inputBuffer.push(turn);
       if (this.inputBuffer.length > this.maxBufferSize) this.inputBuffer.shift();
     }
   }
 
   setupTouchControls() {
-    const buttonToKey = {
-      upBtn: 'ArrowUp', downBtn: 'ArrowDown',
-      leftBtn: 'ArrowLeft', rightBtn: 'ArrowRight'
-    };
-    Object.entries(buttonToKey).forEach(([btnId, key]) => {
-      const btn = document.getElementById(btnId);
+    const map = { upBtn: 'up', downBtn: 'down', leftBtn: 'left', rightBtn: 'right' };
+    Object.entries(map).forEach(([id, turn]) => {
+      const btn = document.getElementById(id);
       if (!btn) return;
-      btn.addEventListener('touchstart', (e) => { e.preventDefault(); this.simulateKeyPress(key, true); }, { passive: false });
-      btn.addEventListener('touchend', (e) => { e.preventDefault(); this.simulateKeyPress(key, false); }, { passive: false });
-      btn.addEventListener('mousedown', (e) => { e.preventDefault(); this.simulateKeyPress(key, true); });
-      btn.addEventListener('mouseup', (e) => { e.preventDefault(); this.simulateKeyPress(key, false); });
-      btn.addEventListener('mouseleave', () => this.simulateKeyPress(key, false));
+      const press = (e) => { e.preventDefault(); this.tapTurn(turn); };
+      btn.addEventListener('touchstart', press, { passive: false });
+      btn.addEventListener('mousedown', press);
       btn.addEventListener('contextmenu', (e) => e.preventDefault());
     });
 
     const pauseBtn = document.getElementById('pauseBtn');
     if (pauseBtn) {
-      const tap = (e) => {
-        e.preventDefault();
-        this.simulateKeyPress('p', true);
-        setTimeout(() => this.simulateKeyPress('p', false), 100);
-      };
+      const tap = (e) => { e.preventDefault(); this.keyState.set('p', true); setTimeout(() => this.keyState.set('p', false), 100); };
       pauseBtn.addEventListener('touchstart', tap, { passive: false });
       pauseBtn.addEventListener('click', tap);
     }
@@ -102,20 +80,17 @@ export class InputHandler {
     const surface = document.getElementById('gameCanvas');
     if (surface) {
       surface.addEventListener('touchstart', (e) => {
-        if (e.touches.length === 1) {
-          this.touchStartPos = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-        }
+        if (e.touches.length === 1) this.touchStartPos = { x: e.touches[0].clientX, y: e.touches[0].clientY };
       }, { passive: true });
       surface.addEventListener('touchend', (e) => {
         if (this.touchStartPos && e.changedTouches.length === 1) {
           const dx = e.changedTouches[0].clientX - this.touchStartPos.x;
           const dy = e.changedTouches[0].clientY - this.touchStartPos.y;
           if (Math.hypot(dx, dy) > this.swipeThreshold) {
-            let key;
-            if (Math.abs(dx) > Math.abs(dy)) key = dx > 0 ? 'ArrowRight' : 'ArrowLeft';
-            else key = dy > 0 ? 'ArrowDown' : 'ArrowUp';
-            this.simulateKeyPress(key, true);
-            setTimeout(() => this.simulateKeyPress(key, false), 120);
+            let turn;
+            if (Math.abs(dx) > Math.abs(dy)) turn = dx > 0 ? 'right' : 'left';
+            else turn = dy > 0 ? 'down' : 'up';
+            this.tapTurn(turn);
           }
           this.touchStartPos = null;
         }
@@ -123,38 +98,35 @@ export class InputHandler {
     }
   }
 
-  simulateKeyPress(key, pressed) {
-    this.keyState.set(key, pressed);
-    if (pressed && this.isMobile && 'vibrate' in navigator) {
-      navigator.vibrate(key === 'p' ? [40] : [15]);
-    }
-    if (pressed && this.directionMapping[key]) this.bufferKey(key);
-    if (!pressed && this.directionMapping[key]) {
-      this.inputBuffer = this.inputBuffer.filter((k) => k !== key);
-    }
+  /** A discrete tap (touch/swipe): buffer the turn and pulse the active key. */
+  tapTurn(turn) {
+    if (this.isMobile && 'vibrate' in navigator) navigator.vibrate(15);
+    this.bufferTurn(turn);
+    this.keyState.set('__' + turn, true);
+    setTimeout(() => this.keyState.set('__' + turn, false), 120);
   }
 
-  isKeyPressed(key) {
-    return this.keyState.get(key) || false;
+  isKeyPressed(k) { return this.keyState.get(k) || false; }
+
+  /**
+   * The most recent buffered turn (consumed once, so a tap turns exactly once).
+   * Also reports whether a movement key is currently held (for acceleration).
+   */
+  consumeTurn() {
+    return this.inputBuffer.length ? this.inputBuffer.shift() : null;
   }
 
-  /** Returns the current held steer direction, or null when nothing is held. */
-  getDirection() {
-    for (let i = this.inputBuffer.length - 1; i >= 0; i--) {
-      const key = this.inputBuffer[i];
-      if (this.isKeyPressed(key)) return { key, direction: this.directionMapping[key] };
+  /** True while any movement input is held (drives speed-up). */
+  isSteering() {
+    for (const t of ['up', 'down', 'left', 'right']) {
+      if (this.isKeyPressed('__' + t)) return true;
     }
-    for (const [key, direction] of Object.entries(this.directionMapping)) {
-      if (this.isKeyPressed(key)) return { key, direction };
+    for (const k of ['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 'a', 's', 'd']) {
+      if (this.isKeyPressed(k)) return true;
     }
-    return null;
+    return false;
   }
 
-  isPausePressed() {
-    return this.isKeyPressed('p') || this.isKeyPressed('P');
-  }
-
-  isQuitPressed() {
-    return this.isKeyPressed('q') || this.isKeyPressed('Q');
-  }
+  isPausePressed() { return this.isKeyPressed('p'); }
+  isQuitPressed() { return this.isKeyPressed('q'); }
 }

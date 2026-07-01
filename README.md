@@ -1,48 +1,46 @@
 # Tetrisnake 3D
 
-Tetrisnake is a blend of Tetris and Snake, rebuilt as a fully 3D game rendered
-with **three.js r185** and **WebGPU** (with automatic WebGL2 fallback). Guide a
-falling snake down a three‑dimensional well, eat food to grow, and fill a whole
-floor layer to clear it — Tetris style, in 3D.
+A fully 3D snake game set inside a cube, rendered with **three.js r185** and
+**WebGPU** (with automatic WebGL2 fallback). Fly the snake through a `12³` cube
+arena, eat food to grow, and don't crash into the walls or yourself — with a
+chase camera that follows the snake and free drag‑to‑orbit.
 
 It began as a sarcastic response to Elon Musk's AI game‑mashup ideas: originally
 a Pygame app, then a 2D web game, and now a polished 3D WebGPU experience.
 
 ## How it plays
 
-The play field is a vertical **well** — a `5 × 5 × 14` cube. The snake always
-falls straight down (`−Y`) on its own. You **steer it horizontally** through the
-`X`/`Z` plane to reach food and to choose where it lands.
+The arena is a true **cube** (`12 × 12 × 12`). The snake advances one cell per
+step in the direction it faces, and you **turn it in 3D** — turns are relative
+to the snake's own orientation, like a flight game, so "up" always curves toward
+the top of the screen. The camera rides behind the snake.
 
-- **Eat food** to grow the snake and score points.
-- When the snake **lands** on the floor or on top of the stack — or crashes into
-  a block or itself — it **locks into place** as colored blocks.
-- Fill an entire horizontal **layer** (all `5 × 5` cells) to **clear it**;
-  everything above drops down. Clearing multiple layers at once scores big.
-- The game ends when a new snake has no room to spawn at the top.
-
-Not steering? The snake falls in a straight column — so line it up before it
-lands.
+- **Eat food** to grow longer and score points; every few foods raises the level
+  and the snake speeds up.
+- **Game over** if the head leaves the cube or runs into the snake's own body.
 
 ## Controls
 
 | Action | Desktop | Mobile |
 | --- | --- | --- |
-| Steer left / right (X) | ← / → | on‑screen buttons or swipe |
-| Steer forward / back (Z) | ↑ / ↓ | on‑screen buttons or swipe |
+| Pitch up / down | ↑ / ↓ or **W** / **S** | on‑screen buttons or swipe up/down |
+| Yaw left / right | ← / → or **A** / **D** | on‑screen buttons or swipe left/right |
+| Rotate the view (manual orbit) | click‑drag | two‑finger drag |
 | Pause | **P** | ⏸ button |
 | Quit to menu (while paused) | **Q** | — |
 
-Holding a steer key accelerates the snake. Mobile devices get touch controls,
-swipe gestures, and haptic feedback where available.
+Holding a turn key accelerates the snake. The manual‑orbit view eases back
+behind the snake when you let go. Mobile devices get touch controls, swipe
+gestures, and haptic feedback where available.
 
 ## Features
 
-- True 3D gameplay in a WebGPU‑rendered well (three.js r185)
-- Emissive neon materials with bloom post‑processing, dynamic lighting and shadows
-- Smoothly interpolated snake motion, particle bursts, and camera shake
+- True 6‑direction 3D movement in a WebGPU‑rendered cube (three.js r185)
+- Chase camera with smooth banking turns and manual drag‑to‑orbit
+- Grid‑lined walls for depth perception; glowing neon frame and materials
+- Bloom post‑processing, dynamic lighting, particle bursts, and camera shake
+- Smoothly interpolated snake motion with a tapered, glowing‑eyed head
 - Procedural sound effects and adaptive background music (Web Audio API)
-- Increasing speed and difficulty as you level up
 - Responsive, full‑viewport layout for desktop and mobile
 
 ## Running

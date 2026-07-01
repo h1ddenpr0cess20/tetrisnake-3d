@@ -1,89 +1,116 @@
 import { config } from './config.js';
 
 /**
- * Snake (3D)
- * Represents the player-controlled snake moving through the 3D well.
- * Each body segment is a grid cell { x, y, z }. y increases upward; the
- * snake falls toward y = 0. Direction is a unit vector along one axis and is
- * decided by the Game every tick (steer while a key is held, otherwise fall).
+ * Snake (true 3D)
+ * The snake flies through the cube. It keeps an orientation frame — a forward
+ * vector and an up vector, both axis-aligned unit vectors — and advances one
+ * cell along `forward` every step. Turns are RELATIVE to that frame:
+ *   left/right  -> yaw around up
+ *   up/down     -> pitch (forward becomes up / -up)
+ * A single 90° turn can never reverse the snake, so no 180° guard is needed.
  */
+const cross = (a, b) => ({
+  x: a.y * b.z - a.z * b.y,
+  y: a.z * b.x - a.x * b.z,
+  z: a.x * b.y - a.y * b.x
+});
+const neg = (v) => ({ x: -v.x, y: -v.y, z: -v.z });
+
 export class Snake {
   constructor() {
     this.body = [];
-    this.direction = { x: 0, y: -1, z: 0 }; // falling
+    this.forward = { x: 1, y: 0, z: 0 };
+    this.up = { x: 0, y: 1, z: 0 };
+    this.pendingTurn = null;      // buffered turn applied on next step
     this.activeDirectionKey = null;
     this.keyHoldStart = 0;
     this.lastUpdateTime = 0;
   }
 
-  /** Spawns a fresh snake as a short vertical column at the top-center of the well. */
   spawn() {
+    const c = Math.floor(config.GRID_N / 2);
+    this.forward = { x: 1, y: 0, z: 0 };
+    this.up = { x: 0, y: 1, z: 0 };
+    this.pendingTurn = null;
+
+    const len = 3;
     this.body = [];
-    const startX = Math.floor(config.GRID_W / 2);
-    const startZ = Math.floor(config.GRID_D / 2);
-    const startY = config.GRID_H - 1;
-    const initialLen = Math.floor(Math.random() * 3) + 2; // 2..4 segments
-
-    // Head at top; earlier body extends upward (above the well) so it slides in.
-    for (let i = 0; i < initialLen; i++) {
-      this.body.push({ x: startX, y: startY + i, z: startZ });
+    // Head at center; body trails behind (opposite forward).
+    for (let i = 0; i < len; i++) {
+      this.body.push({ x: c - i, y: c, z: c });
     }
-
-    this.direction = { x: 0, y: -1, z: 0 };
     this.activeDirectionKey = null;
     this.keyHoldStart = 0;
     this.lastUpdateTime = 0;
   }
 
-  getHead() {
-    return this.body[0];
+  getHead() { return this.body[0]; }
+  getNeck() { return this.body.length > 1 ? this.body[1] : null; }
+
+  /** Buffers a relative turn: 'left' | 'right' | 'up' | 'down'. */
+  queueTurn(turn) {
+    this.pendingTurn = turn;
   }
 
-  getNeck() {
-    return this.body.length > 1 ? this.body[1] : null;
+  /** Resolves the buffered turn into a new (forward, up) frame. */
+  applyTurn() {
+    if (!this.pendingTurn) return;
+    const F = this.forward, U = this.up;
+    const R = cross(F, U); // right
+    switch (this.pendingTurn) {
+      case 'left':  this.forward = neg(R); break;
+      case 'right': this.forward = R; break;
+      case 'up':    this.forward = { ...U }; this.up = neg(F); break;
+      case 'down':  this.forward = neg(U); this.up = { ...F }; break;
+    }
+    this.pendingTurn = null;
   }
 
-  /**
-   * Advances the snake one cell in the given direction.
-   * @param {{x,y,z}} dir - unit direction vector
-   * @param {boolean} eatFood - grow (keep tail) if true
-   * @returns {{x,y,z}} the new head
-   */
-  move(dir, eatFood) {
-    this.direction = dir;
-    const head = this.getHead();
-    const newHead = { x: head.x + dir.x, y: head.y + dir.y, z: head.z + dir.z };
+  /** The forward vector the snake WILL have next step (pending turn resolved). */
+  peekForward() {
+    const F = this.forward, U = this.up;
+    if (!this.pendingTurn) return { ...F };
+    const R = cross(F, U);
+    switch (this.pendingTurn) {
+      case 'left':  return neg(R);
+      case 'right': return R;
+      case 'up':    return { ...U };
+      case 'down':  return neg(U);
+      default:      return { ...F };
+    }
+  }
+
+  /** Where the head will be next step, without mutating state. */
+  peekHead() {
+    const f = this.peekForward();
+    const h = this.getHead();
+    return { x: h.x + f.x, y: h.y + f.y, z: h.z + f.z };
+  }
+
+  /** Advances one cell; returns the new head. Grows when eating. */
+  step(eatFood) {
+    this.applyTurn();
+    const h = this.getHead();
+    const newHead = { x: h.x + this.forward.x, y: h.y + this.forward.y, z: h.z + this.forward.z };
     this.body.unshift(newHead);
     if (!eatFood) this.body.pop();
     this.lastUpdateTime = performance.now();
     return newHead;
   }
 
-  /**
-   * Computes the tick delay based on level, length, and steer-hold acceleration.
-   * @param {number} level
-   * @returns {number} delay in ms
-   */
   computeDelay(level) {
-    const extraSegments = this.body.length - 1;
-    const levelSpeedReduction = Math.min(level - 1, 9) * 18;
-    const lengthSpeedReduction = extraSegments * 14;
-
-    const baseDelay = Math.max(
-      config.SPEEDS.MIN_DELAY + 20,
-      config.SPEEDS.MOVE_DELAY - levelSpeedReduction - lengthSpeedReduction
+    const { MOVE_DELAY, FAST_MOVE_DELAY, HOLD_SCALE, MIN_DELAY, LEVEL_STEP, LENGTH_STEP } = config.SPEEDS;
+    const extra = this.body.length - 3;
+    const base = Math.max(
+      MIN_DELAY + 15,
+      MOVE_DELAY - Math.min(level - 1, 12) * LEVEL_STEP - Math.max(0, extra) * LENGTH_STEP
     );
-
-    let finalDelay = baseDelay;
+    let delay = base;
     if (this.activeDirectionKey && this.keyHoldStart) {
-      const holdTime = performance.now() - this.keyHoldStart;
-      const factor = Math.min(holdTime / config.SPEEDS.HOLD_SCALE, 1);
-      finalDelay = Math.max(
-        config.SPEEDS.MIN_DELAY,
-        baseDelay - (baseDelay - config.SPEEDS.FAST_MOVE_DELAY) * factor
-      );
+      const factor = Math.min((performance.now() - this.keyHoldStart) / HOLD_SCALE, 1);
+      delay = Math.max(MIN_DELAY, base - (base - FAST_MOVE_DELAY) * factor);
     }
-    return finalDelay;
+    return delay;
   }
 
   setActiveDirection(key, timestamp) {
@@ -92,16 +119,11 @@ export class Snake {
       this.keyHoldStart = timestamp;
     }
   }
-
   clearActiveDirection() {
     this.activeDirectionKey = null;
     this.keyHoldStart = 0;
   }
 
-  /**
-   * Whether a cell collides with the snake body.
-   * @param {boolean} excludeTail - ignore the last segment (it will vacate)
-   */
   isCollidingWith(x, y, z, excludeTail = false) {
     return this.body.some((seg, i) => {
       if (i === 0) return false;

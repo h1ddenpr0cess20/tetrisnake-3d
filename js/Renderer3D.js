@@ -4,212 +4,148 @@ import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { config } from './config.js';
 
-const { GRID_W, GRID_D, GRID_H, CELL } = config;
-const BLOCK_CAP = GRID_W * GRID_D * GRID_H;
-const SNAKE_CAP = 256;
+const N = config.GRID_N;
+const CELL = config.CELL;
+const H = (N * CELL) / 2;          // half-extent of the cube
+const SNAKE_CAP = 512;
 const PARTICLE_CAP = 640;
 
 /**
- * Renderer3D
- * WebGPU (three.js r185) renderer for 3D Tetrisnake. Owns the scene, camera,
- * lighting, post-processing (bloom), and all animated meshes: the well frame,
- * the snake (smoothly interpolated), locked blocks, food, and a particle pool.
+ * Renderer3D — WebGPU (three.js r185)
+ * Renders the cubic arena, the free-flying snake, and the food, with a chase
+ * camera that follows the snake and supports manual drag-to-orbit. Emissive
+ * neon materials + bloom, smoothly interpolated motion, particles, camera shake.
  */
 export class Renderer3D {
   constructor(canvas) {
     this.canvas = canvas;
     this.time = 0;
     this.shakeAmt = 0;
-    this.segRender = [];    // interpolated world positions for snake segments
+    this.segRender = [];
     this.foodPos = new THREE.Vector3();
     this.foodTarget = new THREE.Vector3();
-    this._m = new THREE.Object3D(); // scratch for instance matrices
+    this._m = new THREE.Object3D();
     this._c = new THREE.Color();
     this.particles = [];
-    this.blockKeyToIndex = new Map();
+
+    // Camera orientation frame (smoothed toward the snake's) + manual orbit.
+    this.camForward = new THREE.Vector3(1, 0, 0);
+    this.camUp = new THREE.Vector3(0, 1, 0);
+    this.manualYaw = 0;
+    this.manualPitch = 0;
+    this.dragging = false;
   }
 
-  /**
-   * Pre-allocates a per-instance color attribute so the node material compiles
-   * with the instance-color branch enabled from the very first frame (even
-   * before any instances are drawn).
-   */
+  cellToWorld(x, y, z, out = new THREE.Vector3()) {
+    return out.set(
+      (x - (N - 1) / 2) * CELL,
+      (y - (N - 1) / 2) * CELL,
+      (z - (N - 1) / 2) * CELL
+    );
+  }
+
   initInstanceColor(mesh, cap) {
     mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3).fill(1), 3);
     mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
   }
 
-  /**
-   * Hides an instance by collapsing it to a zero-scale matrix. Instanced meshes
-   * always draw their full capacity (so the pipeline's instance count is stable
-   * from the first frame); unused slots are simply scaled to nothing.
-   */
   hideInstance(mesh, i) {
-    this._m.position.set(0, -9999, 0);
+    this._m.position.set(0, -99999, 0);
     this._m.rotation.set(0, 0, 0);
     this._m.scale.setScalar(0);
     this._m.updateMatrix();
     mesh.setMatrixAt(i, this._m.matrix);
   }
 
-  cellToWorld(x, y, z, out = new THREE.Vector3()) {
-    return out.set(
-      (x - (GRID_W - 1) / 2) * CELL,
-      (y + 0.5) * CELL,
-      (z - (GRID_D - 1) / 2) * CELL
-    );
-  }
-
   async init() {
-    // ?webgl=1 forces the WebGL2 backend (useful for headless/verification);
-    // production defaults to WebGPU and falls back to WebGL2 if init fails.
     const forceWebGL = /[?&]webgl=1/.test(location.search);
-    const makeRenderer = (webgl) => {
+    const make = (webgl) => {
       const r = new THREE.WebGPURenderer({ canvas: this.canvas, antialias: true, alpha: false, forceWebGL: webgl });
       r.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
       r.toneMapping = THREE.ACESFilmicToneMapping;
       r.toneMappingExposure = 1.05;
-      r.shadowMap.enabled = true;
-      r.shadowMap.type = THREE.PCFSoftShadowMap;
       return r;
     };
     try {
-      this.renderer = makeRenderer(forceWebGL);
+      this.renderer = make(forceWebGL);
       await this.renderer.init();
     } catch (err) {
       if (forceWebGL) throw err;
       console.warn('WebGPU unavailable, falling back to WebGL2:', err);
-      this.renderer = makeRenderer(true);
+      this.renderer = make(true);
       await this.renderer.init();
     }
 
     this.scene = new THREE.Scene();
     this.scene.backgroundNode = mix(
-      color(config.COLORS.BG_BOTTOM),
-      color(config.COLORS.BG_TOP),
-      screenUV.y.mul(0.9).add(0.1)
+      color(config.COLORS.BG_BOTTOM), color(config.COLORS.BG_TOP), screenUV.y.mul(0.9).add(0.1)
     );
 
-    this.camera = new THREE.PerspectiveCamera(52, 1, 0.1, 200);
-    this.camTarget = new THREE.Vector3(0, GRID_H * CELL * 0.42, 0);
+    this.camera = new THREE.PerspectiveCamera(62, 1, 0.05, 500);
 
     this.buildLights();
-    this.buildWell();
-    this.buildBlocks();
+    this.buildArena();
     this.buildSnake();
     this.buildFood();
     this.buildParticles();
     this.buildPostFX();
+    this.setupCameraControls();
 
     this.resize();
     return this;
   }
 
   buildLights() {
-    this.scene.add(new THREE.HemisphereLight(0x8899ff, 0x1a1a2e, 0.85));
-
-    const key = new THREE.DirectionalLight(0xffffff, 1.6);
-    key.position.set(GRID_W * CELL, GRID_H * CELL * 1.1, GRID_D * CELL * 1.2);
-    key.castShadow = true;
-    key.shadow.mapSize.set(1024, 1024);
-    const s = Math.max(GRID_W, GRID_D) * CELL * 1.6;
-    const cam = key.shadow.camera;
-    cam.left = -s; cam.right = s; cam.top = GRID_H * CELL; cam.bottom = -2;
-    cam.near = 1; cam.far = GRID_H * CELL * 4;
-    key.shadow.bias = -0.002;
-    key.shadow.radius = 4;
+    this.scene.add(new THREE.HemisphereLight(0x9fb4ff, 0x20203a, 1.0));
+    const key = new THREE.DirectionalLight(0xffffff, 1.1);
+    key.position.set(H * 2, H * 2.5, H * 2);
     this.scene.add(key);
-    this.scene.add(key.target);
-    key.target.position.set(0, GRID_H * CELL * 0.4, 0);
-
     const rim = new THREE.DirectionalLight(0x4466ff, 0.5);
-    rim.position.set(-GRID_W * CELL, GRID_H * CELL * 0.3, -GRID_D * CELL);
+    rim.position.set(-H * 2, -H, -H * 2);
     this.scene.add(rim);
-
-    this.foodLight = new THREE.PointLight(config.COLORS.FOOD, 6, 10, 2);
+    this.foodLight = new THREE.PointLight(config.COLORS.FOOD, 5, 12, 2);
     this.scene.add(this.foodLight);
   }
 
-  buildWell() {
-    const w = GRID_W * CELL, d = GRID_D * CELL, h = GRID_H * CELL;
-
-    // Floor
-    const floorMat = new THREE.MeshStandardNodeMaterial({
-      color: 0x0c0c1c, roughness: 0.85, metalness: 0.2
-    });
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(w, d), floorMat);
-    floor.rotation.x = -Math.PI / 2;
-    floor.position.y = 0;
-    floor.receiveShadow = true;
-    this.scene.add(floor);
-
-    // Floor grid lines
-    const gridPts = [];
-    for (let i = 0; i <= GRID_W; i++) {
-      const x = (i - GRID_W / 2) * CELL;
-      gridPts.push(x, 0.01, -d / 2, x, 0.01, d / 2);
-    }
-    for (let j = 0; j <= GRID_D; j++) {
-      const z = (j - GRID_D / 2) * CELL;
-      gridPts.push(-w / 2, 0.01, z, w / 2, 0.01, z);
-    }
-    const gridGeo = new THREE.BufferGeometry();
-    gridGeo.setAttribute('position', new THREE.Float32BufferAttribute(gridPts, 3));
+  buildArena() {
+    // Glowing edge frame.
+    const box = new THREE.BoxGeometry(N * CELL, N * CELL, N * CELL);
     this.scene.add(new THREE.LineSegments(
-      gridGeo, new THREE.LineBasicMaterial({ color: config.COLORS.GRID, transparent: true, opacity: 0.6 })
-    ));
-
-    // Glowing well frame (edges of the volume)
-    const box = new THREE.BoxGeometry(w, h, d);
-    box.translate(0, h / 2, 0);
-    const frame = new THREE.LineSegments(
       new THREE.EdgesGeometry(box),
       new THREE.LineBasicMaterial({ color: config.COLORS.FRAME })
-    );
-    this.scene.add(frame);
+    ));
 
-    // Faint glass walls (back two sides only, so the front stays open)
-    const wallMat = new THREE.MeshBasicNodeMaterial({
-      color: config.COLORS.FRAME, transparent: true, opacity: 0.05,
-      side: THREE.DoubleSide, depthWrite: false
-    });
-    const backZ = new THREE.Mesh(new THREE.PlaneGeometry(w, h), wallMat);
-    backZ.position.set(0, h / 2, -d / 2);
-    this.scene.add(backZ);
-    const backX = new THREE.Mesh(new THREE.PlaneGeometry(d, h), wallMat);
-    backX.rotation.y = Math.PI / 2;
-    backX.position.set(-w / 2, h / 2, 0);
-    this.scene.add(backX);
-
-    // Floor cursor: shows the snake head's column for depth perception.
-    const cursorMat = new THREE.MeshBasicNodeMaterial({
-      color: config.COLORS.SNAKE, transparent: true, opacity: 0.35, depthWrite: false
-    });
-    this.cursor = new THREE.Mesh(new THREE.PlaneGeometry(CELL * 0.9, CELL * 0.9), cursorMat);
-    this.cursor.rotation.x = -Math.PI / 2;
-    this.cursor.position.y = 0.02;
-    this.scene.add(this.cursor);
-  }
-
-  buildBlocks() {
-    const geo = new RoundedBoxGeometry(CELL * 0.92, CELL * 0.92, CELL * 0.92, 2, CELL * 0.12);
-    const mat = new THREE.MeshStandardNodeMaterial({
-      color: 0xffffff, roughness: 0.45, metalness: 0.25,
-      emissive: new THREE.Color(config.COLORS.BLOCK).multiplyScalar(0.45)
-    });
-    this.blocks = new THREE.InstancedMesh(geo, mat, BLOCK_CAP);
-    this.blocks.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    this.initInstanceColor(this.blocks, BLOCK_CAP);
-    this.blocks.castShadow = true;
-    this.blocks.receiveShadow = true;
-    this.blocks.frustumCulled = false;
-    this.blocks.count = BLOCK_CAP;
-    for (let i = 0; i < BLOCK_CAP; i++) this.hideInstance(this.blocks, i);
-    this.scene.add(this.blocks);
+    // Faint grid on all six walls (depth cues for free flight).
+    const pts = [];
+    const a = -H, b = H;
+    const at = (i) => -H + i * CELL;
+    for (let i = 0; i <= N; i++) {
+      const p = at(i);
+      // x = ±H faces (vary y or z)
+      for (const xf of [a, b]) {
+        pts.push(xf, p, a, xf, p, b);
+        pts.push(xf, a, p, xf, b, p);
+      }
+      // y = ±H faces
+      for (const yf of [a, b]) {
+        pts.push(p, yf, a, p, yf, b);
+        pts.push(a, yf, p, b, yf, p);
+      }
+      // z = ±H faces
+      for (const zf of [a, b]) {
+        pts.push(p, a, zf, p, b, zf);
+        pts.push(a, p, zf, b, p, zf);
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    this.scene.add(new THREE.LineSegments(
+      geo, new THREE.LineBasicMaterial({ color: config.COLORS.GRID, transparent: true, opacity: 0.28 })
+    ));
   }
 
   buildSnake() {
-    const geo = new RoundedBoxGeometry(CELL * 0.86, CELL * 0.86, CELL * 0.86, 3, CELL * 0.22);
+    const geo = new RoundedBoxGeometry(CELL * 0.84, CELL * 0.84, CELL * 0.84, 3, CELL * 0.22);
     const mat = new THREE.MeshStandardNodeMaterial({
       color: 0xffffff, roughness: 0.3, metalness: 0.1,
       emissive: new THREE.Color(config.COLORS.SNAKE).multiplyScalar(0.35)
@@ -217,33 +153,29 @@ export class Renderer3D {
     this.snakeBody = new THREE.InstancedMesh(geo, mat, SNAKE_CAP);
     this.snakeBody.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.initInstanceColor(this.snakeBody, SNAKE_CAP);
-    this.snakeBody.castShadow = true;
     this.snakeBody.frustumCulled = false;
     this.snakeBody.count = SNAKE_CAP;
     for (let i = 0; i < SNAKE_CAP; i++) this.hideInstance(this.snakeBody, i);
     this.scene.add(this.snakeBody);
 
-    // Head
     this.head = new THREE.Group();
     const headMat = new THREE.MeshStandardNodeMaterial({
       color: config.COLORS.HEAD, roughness: 0.25, metalness: 0.1,
-      emissive: new THREE.Color(config.COLORS.HEAD).multiplyScalar(0.3)
+      emissive: new THREE.Color(config.COLORS.HEAD).multiplyScalar(0.28)
     });
-    const headMesh = new THREE.Mesh(
-      new RoundedBoxGeometry(CELL * 0.98, CELL * 0.98, CELL * 0.98, 4, CELL * 0.3), headMat
-    );
-    headMesh.castShadow = true;
+    const headMesh = new THREE.Mesh(new RoundedBoxGeometry(CELL * 0.98, CELL * 0.98, CELL * 0.98, 4, CELL * 0.3), headMat);
     this.head.add(headMesh);
 
-    const eyeWhite = new THREE.MeshStandardNodeMaterial({ color: 0xffffff, emissive: 0x222222, roughness: 0.2 });
+    const eyeWhite = new THREE.MeshStandardNodeMaterial({ color: 0xffffff, emissive: 0x333333, roughness: 0.2 });
     const pupil = new THREE.MeshStandardNodeMaterial({ color: 0x0a0a0a, roughness: 0.4 });
-    const eyeGeo = new THREE.SphereGeometry(CELL * 0.14, 12, 12);
-    const pupilGeo = new THREE.SphereGeometry(CELL * 0.07, 10, 10);
+    const eyeGeo = new THREE.SphereGeometry(CELL * 0.15, 12, 12);
+    const pupilGeo = new THREE.SphereGeometry(CELL * 0.08, 10, 10);
+    // lookAt aligns the group's -Z toward travel, so eyes sit on -Z (front).
     for (const sx of [-1, 1]) {
       const e = new THREE.Mesh(eyeGeo, eyeWhite);
-      e.position.set(sx * CELL * 0.22, CELL * 0.12, CELL * 0.42);
+      e.position.set(sx * CELL * 0.24, CELL * 0.16, -CELL * 0.42);
       const p = new THREE.Mesh(pupilGeo, pupil);
-      p.position.set(0, 0, CELL * 0.11);
+      p.position.set(0, 0, -CELL * 0.12);
       e.add(p);
       this.head.add(e);
     }
@@ -253,14 +185,12 @@ export class Renderer3D {
   buildFood() {
     const mat = new THREE.MeshStandardNodeMaterial({
       color: config.COLORS.FOOD, roughness: 0.15, metalness: 0.2,
-      emissive: new THREE.Color(config.COLORS.FOOD).multiplyScalar(0.9)
+      emissive: new THREE.Color(config.COLORS.FOOD).multiplyScalar(0.7)
     });
     this.food = new THREE.Mesh(new THREE.IcosahedronGeometry(CELL * 0.42, 0), mat);
-    this.food.castShadow = true;
     this.scene.add(this.food);
-
     const halo = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(CELL * 0.6, 0),
+      new THREE.IcosahedronGeometry(CELL * 0.62, 0),
       new THREE.MeshBasicNodeMaterial({ color: config.COLORS.FOOD, wireframe: true, transparent: true, opacity: 0.4 })
     );
     this.food.add(halo);
@@ -273,8 +203,8 @@ export class Renderer3D {
     this.particleMesh = new THREE.InstancedMesh(geo, mat, PARTICLE_CAP);
     this.particleMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.initInstanceColor(this.particleMesh, PARTICLE_CAP);
-    this.particleMesh.count = PARTICLE_CAP;
     this.particleMesh.frustumCulled = false;
+    this.particleMesh.count = PARTICLE_CAP;
     for (let i = 0; i < PARTICLE_CAP; i++) this.hideInstance(this.particleMesh, i);
     this.scene.add(this.particleMesh);
     for (let i = 0; i < PARTICLE_CAP; i++) {
@@ -283,30 +213,61 @@ export class Renderer3D {
   }
 
   buildPostFX() {
-    // r185: PostProcessing was renamed RenderPipeline; keep a fallback.
     const Pipeline = THREE.RenderPipeline || THREE.PostProcessing;
     this.postProcessing = new Pipeline(this.renderer);
     const scenePass = pass(this.scene, this.camera);
-    const bloomPass = bloom(scenePass, 0.6, 0.45, 0.2);
-    this.postProcessing.outputNode = scenePass.add(bloomPass);
+    this.postProcessing.outputNode = scenePass.add(bloom(scenePass, 0.7, 0.5, 0.2));
   }
 
-  /* ---------- state sync from the Game ---------- */
+  /* ---------- manual camera rotation ---------- */
+
+  setupCameraControls() {
+    const el = this.canvas;
+    let lastX = 0, lastY = 0;
+    const start = (x, y) => { this.dragging = true; lastX = x; lastY = y; };
+    const move = (x, y) => {
+      if (!this.dragging) return;
+      this.manualYaw -= (x - lastX) * 0.006;
+      this.manualPitch = Math.max(-1.25, Math.min(1.25, this.manualPitch - (y - lastY) * 0.006));
+      lastX = x; lastY = y;
+    };
+    const end = () => { this.dragging = false; };
+
+    el.addEventListener('mousedown', (e) => start(e.clientX, e.clientY));
+    window.addEventListener('mousemove', (e) => move(e.clientX, e.clientY));
+    window.addEventListener('mouseup', end);
+
+    // Two-finger drag rotates (single-finger swipe is reserved for turning).
+    el.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 2) start((e.touches[0].clientX + e.touches[1].clientX) / 2, (e.touches[0].clientY + e.touches[1].clientY) / 2);
+    }, { passive: true });
+    el.addEventListener('touchmove', (e) => {
+      if (e.touches.length === 2) move((e.touches[0].clientX + e.touches[1].clientX) / 2, (e.touches[0].clientY + e.touches[1].clientY) / 2);
+    }, { passive: true });
+    el.addEventListener('touchend', () => { if (this.dragging) end(); });
+  }
+
+  /* ---------- state sync ---------- */
 
   reset(snake, grid) {
     this.segRender = snake.body.map((s) => this.cellToWorld(s.x, s.y, s.z));
-    this.syncBlocks(grid);
     this.cellToWorld(grid.food.x, grid.food.y, grid.food.z, this.foodTarget);
     this.foodPos.copy(this.foodTarget);
     for (const p of this.particles) p.life = 0;
-  }
 
-  onSnakeRespawned(snake) {
-    this.segRender = snake.body.map((s) => this.cellToWorld(s.x, s.y, s.z));
+    this.camForward.set(snake.forward.x, snake.forward.y, snake.forward.z);
+    this.camUp.set(snake.up.x, snake.up.y, snake.up.z);
+    this.manualYaw = this.manualPitch = 0;
+    // Snap the camera behind the head so the first frame is framed correctly.
+    const head = this.segRender[0];
+    const rel = this.camForward.clone().multiplyScalar(-config.CAMERA.DISTANCE)
+      .add(this.camUp.clone().multiplyScalar(config.CAMERA.HEIGHT));
+    this.camera.position.copy(head).add(rel);
+    this.camera.up.copy(this.camUp);
+    this.camera.lookAt(head);
   }
 
   onSnakeMoved(snake) {
-    // New head slides in from where the previous head was rendered.
     const prevHead = this.segRender[0] ? this.segRender[0].clone() : this.cellToWorld(snake.body[0].x, snake.body[0].y, snake.body[0].z);
     this.segRender.unshift(prevHead);
     while (this.segRender.length > snake.body.length) this.segRender.pop();
@@ -316,43 +277,7 @@ export class Renderer3D {
     this.cellToWorld(food.x, food.y, food.z, this.foodTarget);
   }
 
-  addBlocks() { /* blocks are rebuilt via syncBlocks; kept for API symmetry */ }
-
-  syncBlocks(grid) {
-    let i = 0;
-    this.blockKeyToIndex.clear();
-    for (const [posKey, col] of grid.staticBlocks) {
-      if (i >= BLOCK_CAP) break;
-      const [x, y, z] = posKey.split(',').map(Number);
-      this.cellToWorld(x, y, z, this._m.position);
-      this._m.rotation.set(0, 0, 0);
-      this._m.scale.setScalar(1);
-      this._m.updateMatrix();
-      this.blocks.setMatrixAt(i, this._m.matrix);
-      this.blocks.setColorAt(i, this._c.set(col));
-      this.blockKeyToIndex.set(posKey, i);
-      i++;
-    }
-    for (let j = i; j < BLOCK_CAP; j++) this.hideInstance(this.blocks, j);
-    this.blocks.instanceMatrix.needsUpdate = true;
-    if (this.blocks.instanceColor) this.blocks.instanceColor.needsUpdate = true;
-  }
-
-  onLayersCleared(layers) {
-    for (const y of layers) {
-      for (let x = 0; x < GRID_W; x++) {
-        for (let z = 0; z < GRID_D; z++) {
-          if ((x + z) % 2 === 0) this.burst({ x, y, z }, config.COLORS.FRAME, 2);
-        }
-      }
-    }
-  }
-
-  /* ---------- effects ---------- */
-
-  shake(amount) {
-    this.shakeAmt = Math.min(1.2, this.shakeAmt + amount);
-  }
+  shake(amount) { this.shakeAmt = Math.min(1.4, this.shakeAmt + amount); }
 
   burst(cell, colHex, count) {
     const origin = this.cellToWorld(cell.x, cell.y, cell.z);
@@ -361,38 +286,30 @@ export class Renderer3D {
       if (!p) break;
       p.life = p.maxLife = 0.5 + Math.random() * 0.5;
       p.pos.copy(origin);
-      p.vel.set(
-        (Math.random() - 0.5) * 6,
-        Math.random() * 6 + 1,
-        (Math.random() - 0.5) * 6
-      );
+      p.vel.set((Math.random() - 0.5) * 7, (Math.random() - 0.5) * 7, (Math.random() - 0.5) * 7);
       p.col.set(colHex);
       p.size = 0.6 + Math.random() * 0.9;
     }
   }
 
-  /* ---------- main draw ---------- */
+  /* ---------- draw ---------- */
 
   async render(snake, grid, dt, state) {
     const dts = Math.min(dt, 100) / 1000;
     this.time += dts;
-
     this.updateSnake(snake, dts, state);
     this.updateFood(dts);
     this.updateParticles(dts);
-    this.updateCamera(dts, state);
-
-    // r185: RenderPipeline.render() replaces the deprecated renderAsync().
+    this.updateCamera(snake, dts);
     const p = this.postProcessing.render();
     if (p && typeof p.then === 'function') await p;
   }
 
   updateSnake(snake, dts, state) {
     const body = snake.body;
-    const k = state && state.running ? 16 : 8; // smoothing rate
+    const k = state && state.running ? 18 : 10;
     const a = 1 - Math.exp(-dts * k);
 
-    // Ensure render list matches body length (safety).
     while (this.segRender.length < body.length) {
       const ref = body[this.segRender.length];
       this.segRender.push(this.cellToWorld(ref.x, ref.y, ref.z));
@@ -405,17 +322,17 @@ export class Renderer3D {
       this.segRender[i].lerp(target, a);
     }
 
-    // Body instances (skip head at index 0).
     let count = 0;
+    const dark = new THREE.Color(0x0a3d16);
     for (let i = 1; i < this.segRender.length && count < SNAKE_CAP; i++) {
       const t = i / Math.max(1, this.segRender.length - 1);
-      const scale = CELL * (0.98 - 0.28 * t); // taper toward the tail
+      const scale = (0.96 - 0.3 * t);
       this._m.position.copy(this.segRender[i]);
       this._m.rotation.set(0, 0, 0);
-      this._m.scale.setScalar(scale / (CELL * 0.86));
+      this._m.scale.setScalar(scale);
       this._m.updateMatrix();
       this.snakeBody.setMatrixAt(count, this._m.matrix);
-      this._c.set(config.COLORS.SNAKE).lerp(this._c.clone().set(0x0a3d16), t * 0.6);
+      this._c.set(config.COLORS.SNAKE).lerp(dark, t * 0.6);
       this.snakeBody.setColorAt(count, this._c);
       count++;
     }
@@ -423,20 +340,11 @@ export class Renderer3D {
     this.snakeBody.instanceMatrix.needsUpdate = true;
     if (this.snakeBody.instanceColor) this.snakeBody.instanceColor.needsUpdate = true;
 
-    // Head
     if (this.segRender.length > 0) {
       this.head.position.copy(this.segRender[0]);
-      const dir = snake.direction;
-      const look = this.head.position.clone().add(new THREE.Vector3(dir.x, dir.y, dir.z));
-      // Falling straight down: use +Z as "up" to avoid a degenerate lookAt.
-      const vertical = dir.x === 0 && dir.z === 0;
-      this.head.up.set(0, vertical ? 0 : 1, vertical ? 1 : 0);
-      this.head.lookAt(look);
-
-      // Floor cursor under the head
-      this.cursor.position.x = this.head.position.x;
-      this.cursor.position.z = this.head.position.z;
-      this.cursor.material.opacity = 0.18 + 0.12 * (0.5 + 0.5 * Math.sin(this.time * 5));
+      const f = snake.forward, u = snake.up;
+      this.head.up.set(u.x, u.y, u.z);
+      this.head.lookAt(this.head.position.x + f.x, this.head.position.y + f.y, this.head.position.z + f.z);
     }
   }
 
@@ -450,7 +358,7 @@ export class Renderer3D {
     this.foodHalo.rotation.y -= dts * 1.6;
     this.foodHalo.scale.setScalar(1 + 0.08 * Math.sin(this.time * 4 + 1));
     this.foodLight.position.copy(this.foodPos);
-    this.foodLight.intensity = 5 + 2 * Math.sin(this.time * 4);
+    this.foodLight.intensity = 4 + 2 * Math.sin(this.time * 4);
   }
 
   updateParticles(dts) {
@@ -459,8 +367,7 @@ export class Renderer3D {
       if (p.life <= 0) continue;
       p.life -= dts;
       if (p.life <= 0) continue;
-      p.vel.y -= 9 * dts;
-      p.vel.multiplyScalar(1 - 1.2 * dts);
+      p.vel.multiplyScalar(1 - 1.1 * dts);
       p.pos.addScaledVector(p.vel, dts);
       const l = p.life / p.maxLife;
       this._m.position.copy(p.pos);
@@ -476,13 +383,34 @@ export class Renderer3D {
     if (this.particleMesh.instanceColor) this.particleMesh.instanceColor.needsUpdate = true;
   }
 
-  updateCamera(dts) {
-    const h = GRID_H * CELL;
-    const sway = Math.sin(this.time * 0.25) * 0.12;
-    const radius = h * 1.02;
-    const baseX = Math.sin(sway) * radius * 0.5 + h * 0.14;
-    const baseZ = Math.cos(sway) * radius;
-    this.camera.position.set(baseX, h * 0.62, baseZ);
+  updateCamera(snake, dts) {
+    const cam = config.CAMERA;
+    const head = this.segRender[0] || new THREE.Vector3();
+
+    // Ease the camera frame toward the snake's orientation.
+    const a = 1 - Math.exp(-dts * cam.TURN_SMOOTH);
+    this.camForward.lerp(new THREE.Vector3(snake.forward.x, snake.forward.y, snake.forward.z), a);
+    if (this.camForward.lengthSq() > 1e-6) this.camForward.normalize();
+    this.camUp.lerp(new THREE.Vector3(snake.up.x, snake.up.y, snake.up.z), a);
+    if (this.camUp.lengthSq() > 1e-6) this.camUp.normalize();
+
+    const right = new THREE.Vector3().crossVectors(this.camForward, this.camUp).normalize();
+
+    // Base chase offset, then apply manual orbit (yaw about up, pitch about right).
+    const rel = this.camForward.clone().multiplyScalar(-cam.DISTANCE)
+      .add(this.camUp.clone().multiplyScalar(cam.HEIGHT));
+    const q = new THREE.Quaternion()
+      .setFromAxisAngle(this.camUp, this.manualYaw)
+      .multiply(new THREE.Quaternion().setFromAxisAngle(right, this.manualPitch));
+    rel.applyQuaternion(q);
+    const upVec = this.camUp.clone().applyQuaternion(q);
+
+    const desired = head.clone().add(rel);
+    this.camera.position.lerp(desired, 1 - Math.exp(-dts * cam.SMOOTH));
+    this.camera.up.copy(upVec);
+
+    const look = head.clone().add(this.camForward.clone().multiplyScalar(cam.LOOK_AHEAD));
+    this.camera.lookAt(look);
 
     if (this.shakeAmt > 0.001) {
       this.camera.position.x += (Math.random() - 0.5) * this.shakeAmt;
@@ -490,7 +418,13 @@ export class Renderer3D {
       this.camera.position.z += (Math.random() - 0.5) * this.shakeAmt;
       this.shakeAmt *= Math.max(0, 1 - dts * 6);
     }
-    this.camera.lookAt(this.camTarget);
+
+    // Ease the manual orbit back toward "behind the snake" when not dragging.
+    if (!this.dragging) {
+      const decay = Math.exp(-dts * 1.1);
+      this.manualYaw *= decay;
+      this.manualPitch *= decay;
+    }
   }
 
   resize() {
