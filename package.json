@@ -1,0 +1,12 @@
+{
+  "name": "tetrisnake",
+  "version": "1.0.0",
+  "description": "A fully 3D snake game in a WebGPU-rendered Tetris well (three.js r185).",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "start": "npx serve"
+  }
+}
