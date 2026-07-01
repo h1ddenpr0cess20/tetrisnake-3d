@@ -1,169 +1,140 @@
+import { config } from './config.js';
+
 /**
- * Grid Class
- * Manages the game grid including static blocks, food items, and collision detection.
- * Handles line clearing mechanics similar to Tetris.
+ * Grid (3D)
+ * Manages the static blocks, food, and Tetris-style layer clearing inside the
+ * 3D well. Blocks are keyed by "x,y,z". A "layer" is a full horizontal
+ * GRID_W x GRID_D plane at a given y; clearing one drops everything above it.
  */
-class Grid {
-  /**
-   * Initializes a new Grid instance
-   */
+export class Grid {
   constructor() {
-    this.staticBlocks = new Map();       // Map of placed blocks with position as key
-    this.food = { x: 0, y: 0 };          // Current food position
-    this.landedBlocks = 0;               // Counter for blocks that have landed
+    this.staticBlocks = new Map(); // "x,y,z" -> color (hex int)
+    this.food = { x: 0, y: 0, z: 0 };
+    this.landedBlocks = 0;
   }
 
-  /**
-   * Resets the grid to initial state
-   */
+  static key(x, y, z) {
+    return `${x},${y},${z}`;
+  }
+
   reset() {
     this.staticBlocks.clear();
     this.landedBlocks = 0;
-    this.spawnFood();
+    this.food = { x: 0, y: 0, z: 0 };
   }
 
-  /**
-   * Checks if a position contains a static block
-   * @param {number} x - X coordinate to check
-   * @param {number} y - Y coordinate to check
-   * @returns {boolean} True if position contains a static block
-   */
-  isStaticBlock(x, y) {
-    return this.staticBlocks.has(`${x},${y}`);
+  isStaticBlock(x, y, z) {
+    return this.staticBlocks.has(Grid.key(x, y, z));
   }
 
-  /**
-   * Spawns food at a random empty position, never in the top row
-   * @param {Snake} snake - Snake object to avoid spawning food on
-   */
-  spawnFood(snake) {
-    do {
-      this.food = {
-        x: Math.floor(Math.random() * config.GRID_WIDTH),
-        // Start from row 1 (second row) instead of row 0 (top row)
-        y: Math.floor(Math.random() * (config.GRID_HEIGHT - 1)) + 1
-      };
-    } while (
-      this.isStaticBlock(this.food.x, this.food.y) ||
-      (snake && snake.isCollidingWith(this.food.x, this.food.y))
+  /** True if the cell is outside the well or occupied by a block. */
+  isBlockedCell(x, y, z) {
+    return (
+      x < 0 || x >= config.GRID_W ||
+      z < 0 || z >= config.GRID_D ||
+      y < 0 || y >= config.GRID_H ||
+      this.isStaticBlock(x, y, z)
     );
   }
 
-  /**
-   * Checks if a position contains food
-   * @param {number} x - X coordinate to check
-   * @param {number} y - Y coordinate to check
-   * @returns {boolean} True if position contains food
-   */
-  isSnakeEatingFood(x, y) {
-    return x === this.food.x && y === this.food.y;
+  /** True if the cell is outside the X/Z footprint (a side wall). */
+  isOutsideXZ(x, z) {
+    return x < 0 || x >= config.GRID_W || z < 0 || z >= config.GRID_D;
+  }
+
+  isFood(x, y, z) {
+    return x === this.food.x && y === this.food.y && z === this.food.z;
   }
 
   /**
-   * Checks if a position results in a collision
-   * @param {number} x - X coordinate to check
-   * @param {number} y - Y coordinate to check
-   * @returns {boolean} True if position is invalid or occupied
+   * Spawns food at a reachable empty cell. Prefers the top-most empty cell of a
+   * random column so it is never buried under the stack.
    */
-  isCollision(x, y) {
-    return x < 0 || 
-           x >= config.GRID_WIDTH || 
-           y < 0 || 
-           y >= config.GRID_HEIGHT || 
-           this.isStaticBlock(x, y);
+  spawnFood(snake) {
+    const maxTries = 200;
+    for (let t = 0; t < maxTries; t++) {
+      const x = Math.floor(Math.random() * config.GRID_W);
+      const z = Math.floor(Math.random() * config.GRID_D);
+
+      // Find the highest filled cell in this column, then place food above it.
+      let top = -1;
+      for (let y = config.GRID_H - 1; y >= 0; y--) {
+        if (this.isStaticBlock(x, y, z)) { top = y; break; }
+      }
+      const minY = top + 1;
+      if (minY > config.GRID_H - 1) continue; // column full
+
+      const y = minY + Math.floor(Math.random() * (config.GRID_H - minY));
+      if (this.isStaticBlock(x, y, z)) continue;
+      if (snake && snake.isCollidingWith(x, y, z)) continue;
+      const head = snake && snake.getHead();
+      if (head && head.x === x && head.y === y && head.z === z) continue;
+
+      this.food = { x, y, z };
+      return;
+    }
+    // Fallback: any empty cell.
+    for (let y = 0; y < config.GRID_H; y++)
+      for (let x = 0; x < config.GRID_W; x++)
+        for (let z = 0; z < config.GRID_D; z++)
+          if (!this.isStaticBlock(x, y, z)) { this.food = { x, y, z }; return; }
   }
 
-  /**
-   * Locks the snake into static blocks (turns snake into blocks)
-   * @param {Snake} snake - The snake object to lock
-   */
+  /** Turns the snake's current body into static blocks. */
   lockSnake(snake) {
-    // Add each snake segment as a static block with color variations
+    const locked = [];
     for (let i = 0; i < snake.body.length; i++) {
       const seg = snake.body[i];
-      
-      // Store original color reference to maintain color scheme,
-      // but give a slight color variation to make each block look unique
-      const variance = Math.floor(Math.random() * 30) - 15; // Random value between -15 and 15
-      const blockColor = i === 0 
-        ? config.COLORS.BLOCK // Head is always block color
-        : this.adjustBlockColor(config.COLORS.BLOCK, variance);
-      
-      this.staticBlocks.set(`${seg.x},${seg.y}`, blockColor);
-      this.landedBlocks++;
-    }
-  }
-  
-  /**
-   * Helper to adjust a color's brightness for block variation
-   * @param {string} color - Hex color
-   * @param {number} adjustment - Amount to adjust (-100 to +100)
-   * @returns {string} Adjusted color
-   */
-  adjustBlockColor(color, adjustment) {
-    // Parse the hex color
-    const hex = color.startsWith('#') ? color.slice(1) : color;
-    const r = parseInt(hex.substr(0, 2), 16);
-    const g = parseInt(hex.substr(2, 2), 16);
-    const b = parseInt(hex.substr(4, 2), 16);
-    
-    // Adjust each component
-    const newR = Math.max(0, Math.min(255, r + adjustment));
-    const newG = Math.max(0, Math.min(255, g + adjustment));
-    const newB = Math.max(0, Math.min(255, b + adjustment));
-    
-    // Convert back to hex
-    return `#${newR.toString(16).padStart(2, '0')}${newG.toString(16).padStart(2, '0')}${newB.toString(16).padStart(2, '0')}`;
-  }
-
-  /**
-   * Clears any full lines and shifts blocks above down
-   * @returns {number} Number of lines cleared
-   */
-  clearLines() {
-    let linesCleared = 0;
-    
-    // Check lines from bottom to top
-    for (let y = config.GRID_HEIGHT - 1; y >= 0; y--) {
-      if (this.isLineFull(y)) {
-        linesCleared++;
-        this.removeLine(y);
-        y++; // Check the same line again after shifting
+      if (seg.y < 0 || seg.y >= config.GRID_H) continue; // ignore off-field segments
+      const variance = (Math.floor(Math.random() * 40) - 20) / 255;
+      const color = i === 0 ? config.COLORS.BLOCK : this.varyColor(config.COLORS.BLOCK, variance);
+      const k = Grid.key(seg.x, seg.y, seg.z);
+      if (!this.staticBlocks.has(k)) {
+        this.staticBlocks.set(k, color);
+        this.landedBlocks++;
+        locked.push({ x: seg.x, y: seg.y, z: seg.z });
       }
     }
-    
-    return linesCleared;
+    return locked;
   }
 
-  /**
-   * Checks if a row is completely filled with blocks
-   * @param {number} y - Y coordinate of the line to check
-   * @returns {boolean} True if the line is full
-   */
-  isLineFull(y) {
-    for (let x = 0; x < config.GRID_WIDTH; x++) {
-      if (!this.isStaticBlock(x, y)) return false;
-    }
+  varyColor(hex, amt) {
+    let r = (hex >> 16) & 0xff, g = (hex >> 8) & 0xff, b = hex & 0xff;
+    const a = Math.round(amt * 255);
+    r = Math.max(0, Math.min(255, r + a));
+    g = Math.max(0, Math.min(255, g + a));
+    b = Math.max(0, Math.min(255, b + a));
+    return (r << 16) | (g << 8) | b;
+  }
+
+  isLayerFull(y) {
+    for (let x = 0; x < config.GRID_W; x++)
+      for (let z = 0; z < config.GRID_D; z++)
+        if (!this.isStaticBlock(x, y, z)) return false;
     return true;
   }
 
   /**
-   * Removes a line and shifts all blocks above it down
-   * @param {number} y - Y coordinate of the line to remove
+   * Clears every full layer and drops the blocks above each cleared layer down.
+   * @returns {{cleared:number, layers:number[]}} count and the y-levels cleared
    */
-  removeLine(y) {
-    // Remove the full line
-    for (let x = 0; x < config.GRID_WIDTH; x++) {
-      this.staticBlocks.delete(`${x},${y}`);
+  clearLayers() {
+    const clearedLevels = [];
+    for (let y = 0; y < config.GRID_H; y++) {
+      if (this.isLayerFull(y)) clearedLevels.push(y);
     }
-    
-    // Shift all blocks above the line down one row
-    const newStatic = new Map();
+    if (clearedLevels.length === 0) return { cleared: 0, layers: [] };
+
+    // Rebuild the block map, dropping surviving blocks by how many cleared
+    // layers sit below them.
+    const survivors = new Map();
     for (const [pos, col] of this.staticBlocks) {
-      const [px, py] = pos.split(",").map(Number);
-      newStatic.set(`${px},${py < y ? py + 1 : py}`, col);
+      const [px, py, pz] = pos.split(',').map(Number);
+      if (clearedLevels.includes(py)) continue;
+      const drop = clearedLevels.filter((cy) => cy < py).length;
+      survivors.set(Grid.key(px, py - drop, pz), col);
     }
-    
-    this.staticBlocks = newStatic;
+    this.staticBlocks = survivors;
+    return { cleared: clearedLevels.length, layers: clearedLevels };
   }
-} 
+}

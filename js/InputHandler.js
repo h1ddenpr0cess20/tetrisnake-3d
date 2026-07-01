@@ -1,322 +1,160 @@
+import { config } from './config.js';
+
 /**
- * InputHandler Class
- * Manages keyboard and touch input for game controls.
- * Handles direction changes, buffering inputs, and special actions (pause/quit).
+ * InputHandler (3D)
+ * Maps keyboard, touch buttons, and swipe gestures to horizontal steer
+ * directions in the X/Z plane. The snake falls on its own; input only steers.
  */
-class InputHandler {
-  /**
-   * Initializes a new InputHandler instance
-   */
+export class InputHandler {
   constructor() {
-    this.keyState = new Map();          // Tracks currently pressed keys
-    this.lastProcessedKey = null;       // Last key that was processed
-    this.inputBuffer = [];              // Buffer to store recent direction inputs
-    this.maxBufferSize = 2;             // Buffer size limit
-    this.touchStartPos = null;          // Track touch start position for swipe detection
-    this.swipeThreshold = 50;           // Minimum distance for swipe detection
-    this.isMobile = this.detectMobile(); // Detect if on mobile device
-    
+    this.keyState = new Map();
+    this.inputBuffer = [];
+    this.maxBufferSize = 2;
+    this.touchStartPos = null;
+    this.swipeThreshold = config.MOBILE.SWIPE_THRESHOLD;
+    this.isMobile = this.detectMobile();
+
+    // Arrow keys steer horizontally: Left/Right = X, Up/Down = Z (depth).
+    this.directionMapping = {
+      ArrowUp: { x: 0, y: 0, z: -1 },
+      ArrowDown: { x: 0, y: 0, z: 1 },
+      ArrowLeft: { x: -1, y: 0, z: 0 },
+      ArrowRight: { x: 1, y: 0, z: 0 }
+    };
+    this.oppositeDirections = {
+      ArrowUp: 'ArrowDown', ArrowDown: 'ArrowUp',
+      ArrowLeft: 'ArrowRight', ArrowRight: 'ArrowLeft'
+    };
+
     this.setupEventListeners();
     this.setupTouchControls();
-    
-    // Map arrow keys to direction vectors
-    this.directionMapping = {
-      "ArrowUp": { x: 0, y: -1 },
-      "ArrowDown": { x: 0, y: 1 },
-      "ArrowLeft": { x: -1, y: 0 },
-      "ArrowRight": { x: 1, y: 0 }
-    };
-    
-    // Map of opposite directions to prevent 180° turns
-    this.oppositeDirections = {
-      "ArrowUp": "ArrowDown",
-      "ArrowDown": "ArrowUp",
-      "ArrowLeft": "ArrowRight",
-      "ArrowRight": "ArrowLeft"
-    };
-    
-    // Prevent spacebar from triggering buttons
-    window.addEventListener("keydown", (e) => {
-      if (e.code === "Space") {
+
+    window.addEventListener('keydown', (e) => {
+      if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
         e.preventDefault();
       }
     }, { capture: true });
   }
 
-  /**
-   * Detects if the device is mobile
-   * @returns {boolean} True if mobile device
-   */
   detectMobile() {
     return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
-           ('ontouchstart' in window) ||
-           (window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+      ('ontouchstart' in window) ||
+      (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
   }
 
-  /**
-   * Sets up event listeners for keyboard input
-   */
   setupEventListeners() {
-    // Handle key press events
-    document.addEventListener("keydown", (e) => {
-      // Only process game control keys
-      if (this.directionMapping[e.key] || e.key.toLowerCase() === "p" || e.key.toLowerCase() === "q") {
-        // Update key state
-        this.keyState.set(e.key, true);
-        
-        // Process direction keys for buffering
-        if (this.directionMapping[e.key]) {
-          const lastKey = this.inputBuffer.length > 0 ? this.inputBuffer[this.inputBuffer.length - 1] : null;
-          
-          // Avoid buffering moves that would cause immediate reversal
-          const currentOppKey = lastKey ? this.oppositeDirections[lastKey] : null;
-          if (e.key !== lastKey && e.key !== currentOppKey) {
-            // Remove duplicates of this key from buffer
-            this.inputBuffer = this.inputBuffer.filter(key => key !== e.key);
-            
-            // Add key to end of buffer (most recent)
-            this.inputBuffer.push(e.key);
-            
-            // Maintain buffer size limit
-            if (this.inputBuffer.length > this.maxBufferSize) {
-              this.inputBuffer.shift();
-            }
-          }
-        }
+    document.addEventListener('keydown', (e) => {
+      const k = e.key;
+      if (this.directionMapping[k] || k.toLowerCase() === 'p' || k.toLowerCase() === 'q') {
+        this.keyState.set(k, true);
+        if (this.directionMapping[k]) this.bufferKey(k);
       }
     });
-
-    // Handle key release events
-    document.addEventListener("keyup", (e) => {
+    document.addEventListener('keyup', (e) => {
       this.keyState.set(e.key, false);
-      
-      // Update input buffer when direction keys are released
       if (this.directionMapping[e.key]) {
-        this.inputBuffer = this.inputBuffer.filter(key => key !== e.key);
+        this.inputBuffer = this.inputBuffer.filter((key) => key !== e.key);
       }
     });
-    
-    // Clear input state when window loses focus
-    window.addEventListener("blur", () => {
+    window.addEventListener('blur', () => {
       this.keyState.clear();
       this.inputBuffer = [];
     });
   }
 
-  /**
-   * Sets up touch controls for mobile devices
-   */
+  bufferKey(key) {
+    const lastKey = this.inputBuffer.length ? this.inputBuffer[this.inputBuffer.length - 1] : null;
+    const oppKey = lastKey ? this.oppositeDirections[lastKey] : null;
+    if (key !== lastKey && key !== oppKey) {
+      this.inputBuffer = this.inputBuffer.filter((kk) => kk !== key);
+      this.inputBuffer.push(key);
+      if (this.inputBuffer.length > this.maxBufferSize) this.inputBuffer.shift();
+    }
+  }
+
   setupTouchControls() {
-    // Get mobile control buttons
-    const upBtn = document.getElementById('upBtn');
-    const downBtn = document.getElementById('downBtn');
-    const leftBtn = document.getElementById('leftBtn');
-    const rightBtn = document.getElementById('rightBtn');
-    const pauseBtn = document.getElementById('pauseBtn');
-
-    // Button mapping to keys
     const buttonToKey = {
-      upBtn: 'ArrowUp',
-      downBtn: 'ArrowDown',
-      leftBtn: 'ArrowLeft',
-      rightBtn: 'ArrowRight'
+      upBtn: 'ArrowUp', downBtn: 'ArrowDown',
+      leftBtn: 'ArrowLeft', rightBtn: 'ArrowRight'
     };
-
-    // Add touch event listeners for direction buttons
     Object.entries(buttonToKey).forEach(([btnId, key]) => {
       const btn = document.getElementById(btnId);
-      if (btn) {
-        // Handle touch start
-        btn.addEventListener('touchstart', (e) => {
-          e.preventDefault();
-          this.simulateKeyPress(key, true);
-        }, { passive: false });
-
-        // Handle touch end
-        btn.addEventListener('touchend', (e) => {
-          e.preventDefault();
-          this.simulateKeyPress(key, false);
-        }, { passive: false });
-
-        // Handle mouse events for desktop testing
-        btn.addEventListener('mousedown', (e) => {
-          e.preventDefault();
-          this.simulateKeyPress(key, true);
-        });
-
-        btn.addEventListener('mouseup', (e) => {
-          e.preventDefault();
-          this.simulateKeyPress(key, false);
-        });
-
-        // Prevent context menu on long press
-        btn.addEventListener('contextmenu', (e) => e.preventDefault());
-      }
+      if (!btn) return;
+      btn.addEventListener('touchstart', (e) => { e.preventDefault(); this.simulateKeyPress(key, true); }, { passive: false });
+      btn.addEventListener('touchend', (e) => { e.preventDefault(); this.simulateKeyPress(key, false); }, { passive: false });
+      btn.addEventListener('mousedown', (e) => { e.preventDefault(); this.simulateKeyPress(key, true); });
+      btn.addEventListener('mouseup', (e) => { e.preventDefault(); this.simulateKeyPress(key, false); });
+      btn.addEventListener('mouseleave', () => this.simulateKeyPress(key, false));
+      btn.addEventListener('contextmenu', (e) => e.preventDefault());
     });
 
-    // Handle pause button
+    const pauseBtn = document.getElementById('pauseBtn');
     if (pauseBtn) {
-      pauseBtn.addEventListener('touchstart', (e) => {
-        e.preventDefault();
-        this.simulateKeyPress('p', true);
-        // Immediately release for pause toggle
-        setTimeout(() => this.simulateKeyPress('p', false), 100);
-      }, { passive: false });
-
-      pauseBtn.addEventListener('click', (e) => {
+      const tap = (e) => {
         e.preventDefault();
         this.simulateKeyPress('p', true);
         setTimeout(() => this.simulateKeyPress('p', false), 100);
-      });
+      };
+      pauseBtn.addEventListener('touchstart', tap, { passive: false });
+      pauseBtn.addEventListener('click', tap);
     }
 
-    // Add swipe gesture support on the canvas
-    const canvas = document.getElementById('gameCanvas');
-    if (canvas) {
-      canvas.addEventListener('touchstart', (e) => {
-        e.preventDefault();
+    const surface = document.getElementById('gameCanvas');
+    if (surface) {
+      surface.addEventListener('touchstart', (e) => {
         if (e.touches.length === 1) {
-          this.touchStartPos = {
-            x: e.touches[0].clientX,
-            y: e.touches[0].clientY
-          };
+          this.touchStartPos = { x: e.touches[0].clientX, y: e.touches[0].clientY };
         }
-      }, { passive: false });
-
-      canvas.addEventListener('touchmove', (e) => {
-        e.preventDefault();
-      }, { passive: false });
-
-      canvas.addEventListener('touchend', (e) => {
-        e.preventDefault();
+      }, { passive: true });
+      surface.addEventListener('touchend', (e) => {
         if (this.touchStartPos && e.changedTouches.length === 1) {
-          const touchEndPos = {
-            x: e.changedTouches[0].clientX,
-            y: e.changedTouches[0].clientY
-          };
-
-          const deltaX = touchEndPos.x - this.touchStartPos.x;
-          const deltaY = touchEndPos.y - this.touchStartPos.y;
-          const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
-
-          if (distance > this.swipeThreshold) {
-            let swipeKey = null;
-            
-            if (Math.abs(deltaX) > Math.abs(deltaY)) {
-              // Horizontal swipe
-              swipeKey = deltaX > 0 ? 'ArrowRight' : 'ArrowLeft';
-            } else {
-              // Vertical swipe
-              swipeKey = deltaY > 0 ? 'ArrowDown' : 'ArrowUp';
-            }
-
-            if (swipeKey) {
-              this.simulateKeyPress(swipeKey, true);
-              setTimeout(() => this.simulateKeyPress(swipeKey, false), 100);
-            }
+          const dx = e.changedTouches[0].clientX - this.touchStartPos.x;
+          const dy = e.changedTouches[0].clientY - this.touchStartPos.y;
+          if (Math.hypot(dx, dy) > this.swipeThreshold) {
+            let key;
+            if (Math.abs(dx) > Math.abs(dy)) key = dx > 0 ? 'ArrowRight' : 'ArrowLeft';
+            else key = dy > 0 ? 'ArrowDown' : 'ArrowUp';
+            this.simulateKeyPress(key, true);
+            setTimeout(() => this.simulateKeyPress(key, false), 120);
           }
-
           this.touchStartPos = null;
         }
-      }, { passive: false });
+      }, { passive: true });
     }
   }
 
-  /**
-   * Simulates a key press or release
-   * @param {string} key - The key to simulate
-   * @param {boolean} pressed - Whether the key is pressed or released
-   */
   simulateKeyPress(key, pressed) {
-    // Update key state
     this.keyState.set(key, pressed);
-    
-    // Add haptic feedback for mobile devices
     if (pressed && this.isMobile && 'vibrate' in navigator) {
-      // Light vibration for direction changes, stronger for pause
-      const vibrationPattern = key === 'p' ? [50] : [20];
-      navigator.vibrate(vibrationPattern);
+      navigator.vibrate(key === 'p' ? [40] : [15]);
     }
-    
-    // Process direction keys for buffering when pressed
-    if (pressed && this.directionMapping[key]) {
-      const lastKey = this.inputBuffer.length > 0 ? this.inputBuffer[this.inputBuffer.length - 1] : null;
-      
-      // Avoid buffering moves that would cause immediate reversal
-      const currentOppKey = lastKey ? this.oppositeDirections[lastKey] : null;
-      if (key !== lastKey && key !== currentOppKey) {
-        // Remove duplicates of this key from buffer
-        this.inputBuffer = this.inputBuffer.filter(k => k !== key);
-        
-        // Add key to end of buffer (most recent)
-        this.inputBuffer.push(key);
-        
-        // Maintain buffer size limit
-        if (this.inputBuffer.length > this.maxBufferSize) {
-          this.inputBuffer.shift();
-        }
-      }
-    }
-    
-    // Update input buffer when direction keys are released
+    if (pressed && this.directionMapping[key]) this.bufferKey(key);
     if (!pressed && this.directionMapping[key]) {
-      this.inputBuffer = this.inputBuffer.filter(k => k !== key);
+      this.inputBuffer = this.inputBuffer.filter((k) => k !== key);
     }
   }
 
-  /**
-   * Checks if a specific key is currently pressed
-   * @param {string} key - The key to check
-   * @returns {boolean} True if the key is pressed
-   */
   isKeyPressed(key) {
     return this.keyState.get(key) || false;
   }
 
-  /**
-   * Gets the current direction input based on pressed keys
-   * @returns {Object|null} Object with key and direction vector, or null if no direction keys pressed
-   */
+  /** Returns the current held steer direction, or null when nothing is held. */
   getDirection() {
-    // First check the buffered keys (prioritize most recent)
     for (let i = this.inputBuffer.length - 1; i >= 0; i--) {
       const key = this.inputBuffer[i];
-      if (this.isKeyPressed(key)) {
-        return { key, direction: this.directionMapping[key] };
-      }
+      if (this.isKeyPressed(key)) return { key, direction: this.directionMapping[key] };
     }
-    
-    // Fallback: check all direction keys if buffer is empty or no buffered keys are pressed
     for (const [key, direction] of Object.entries(this.directionMapping)) {
-      if (this.isKeyPressed(key)) {
-        // Add to buffer for consistency
-        if (!this.inputBuffer.includes(key)) {
-          this.inputBuffer.push(key);
-          // Maintain buffer size limit
-          if (this.inputBuffer.length > this.maxBufferSize) {
-            this.inputBuffer.shift();
-          }
-        }
-        return { key, direction };
-      }
+      if (this.isKeyPressed(key)) return { key, direction };
     }
-    
     return null;
   }
 
-  /**
-   * Checks if pause key is pressed
-   * @returns {boolean} True if pause key (P) is pressed
-   */
   isPausePressed() {
-    return this.isKeyPressed("p") || this.isKeyPressed("P");
+    return this.isKeyPressed('p') || this.isKeyPressed('P');
   }
 
-  /**
-   * Checks if quit key is pressed
-   * @returns {boolean} True if quit key (Q) is pressed
-   */
   isQuitPressed() {
-    return this.isKeyPressed("q") || this.isKeyPressed("Q");
+    return this.isKeyPressed('q') || this.isKeyPressed('Q');
   }
 }

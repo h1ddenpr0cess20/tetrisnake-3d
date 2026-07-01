@@ -1,111 +1,76 @@
+import { config } from './config.js';
+import { Snake } from './Snake.js';
+import { Grid } from './Grid.js';
+import { InputHandler } from './InputHandler.js';
+import { UI } from './UI.js';
+import { AudioManager } from './AudioManager.js';
+import { Renderer3D } from './Renderer3D.js';
+
+const DOWN = { x: 0, y: -1, z: 0 };
+
 /**
- * Game Class
- * The core game controller that manages game state, logic, and components.
- * Handles the main game loop, input processing, and game event coordination.
+ * Game (3D)
+ * Core controller: owns state, the fixed-timestep simulation, input handling,
+ * and coordination between the model (Snake/Grid) and the WebGPU renderer.
  */
-class Game {
-  /**
-   * Creates a new Game instance
-   * @param {string} canvasId - The ID of the canvas element for rendering
-   */
+export class Game {
   constructor(canvasId) {
     this.canvas = document.getElementById(canvasId);
     this.snake = new Snake();
     this.grid = new Grid();
-    this.renderer = new Renderer(this.canvas);
+    this.renderer = new Renderer3D(this.canvas);
     this.inputHandler = new InputHandler();
     this.audioManager = new AudioManager();
     this.ui = new UI({
-      mainMenu: "mainMenu",
-      paused: "pausedOverlay",
-      gameOver: "gameOverOverlay",
-      finalScore: "finalScore",
-      finalLevel: "finalLevel",
-      startButton: "startButton",
-      restartButton: "restartButton"
-    });    // Game state variables
+      mainMenu: 'mainMenu', paused: 'pausedOverlay', gameOver: 'gameOverOverlay',
+      finalScore: 'finalScore', finalLevel: 'finalLevel',
+      startButton: 'startButton', restartButton: 'restartButton'
+    });
+
     this.score = 0;
     this.level = 1;
     this.gameOver = false;
     this.paused = false;
-    this.lastMoveTime = 0;
+    this.running = false;
+    this.pausePressed = false;
+
+    this.lastFrameTime = 0;
     this.accumulator = 0;
-    this.gameLoopId = null; // Track the animation frame ID
-    
+    this.rendering = false;
+
     this.bindEvents();
-    
-    // Set initial UI state
     this.ui.updateSoundButtonText();
     this.ui.updateMusicButtonText();
   }
 
-  /**
-   * Binds all event handlers for game interaction
-   */
+  async init() {
+    await this.renderer.init();
+    // Idle-render the well behind the menu so the first screen looks alive.
+    this.startRenderLoop();
+  }
+
   bindEvents() {
-    // Handle window resize
-    window.addEventListener("resize", () => this.renderer.resizeCanvas());
-      // Game start handler
-    this.ui.onStartGame(() => {
-      this.ui.hideMainMenu();
-      this.ui.showMobileControls();
-      this.start();
-    });
-      // Game restart handler
-    this.ui.onRestartGame(() => {
-      this.ui.hideGameOver();
-      this.ui.showMobileControls();
-      this.stopGameLoop(); // Stop the existing game loop
-      this.start(); // Start fresh
-    });
-    
-    // Pause menu resume button handler
+    window.addEventListener('resize', () => this.renderer.resize());
+    this.ui.onStartGame(() => { this.ui.hideMainMenu(); this.ui.showMobileControls(); this.ui.showHUD(); this.start(); });
+    this.ui.onRestartGame(() => { this.ui.hideGameOver(); this.ui.showMobileControls(); this.ui.showHUD(); this.start(); });
     this.ui.onResumeGame(() => {
       this.paused = false;
       this.ui.togglePauseMenu(false);
       this.audioManager.resumeBackgroundMusic();
     });
-    
-    // Pause menu quit button handler
-    this.ui.onQuitToMenu(() => {
-      this.quitToMainMenu();
-    });
-    
-    // Audio controls
-    this.ui.onSoundToggle(() => {
-      const isMuted = this.audioManager.toggleMute();
-      return isMuted;
-    });
-    
-    this.ui.onMusicToggle(() => {
-      const isMuted = this.audioManager.toggleMusic();
-      return isMuted;
-    });
+    this.ui.onQuitToMenu(() => this.quitToMainMenu());
+    this.ui.onSoundToggle(() => this.audioManager.toggleMute());
+    this.ui.onMusicToggle(() => this.audioManager.toggleMusic());
   }
-  /**
-   * Starts a new game session
-   */
+
   start() {
-    this.stopGameLoop(); // Ensure any existing loop is stopped
     this.reset();
-    this.lastMoveTime = performance.now();
     this.audioManager.startBackgroundMusic();
-    this.gameLoop(this.lastMoveTime);
+    this.running = true;
+    this.lastFrameTime = performance.now();
+    this.accumulator = 0;
   }
 
-  /**
-   * Stops the current game loop
-   */
-  stopGameLoop() {
-    if (this.gameLoopId) {
-      cancelAnimationFrame(this.gameLoopId);
-      this.gameLoopId = null;
-    }
-  }
-
-  /**
-   * Resets the game state to initial values
-   */
   reset() {
     this.score = 0;
     this.level = 1;
@@ -114,215 +79,169 @@ class Game {
     this.grid.reset();
     this.snake.spawn();
     this.grid.spawnFood(this.snake);
-    
-    // Clear the canvas to prevent any remnants of the previous game
-    this.renderer.clear();
-  }
-  /**
-   * Main game loop, runs every animation frame
-   * @param {number} timestamp - Current time from requestAnimationFrame
-   */
-  gameLoop(timestamp) {
-    if (!this.lastMoveTime) this.lastMoveTime = timestamp;
-    const delta = timestamp - this.lastMoveTime;
-    this.lastMoveTime = timestamp;
-
-    this.handleInput();
-
-    if (!this.paused && !this.gameOver) {
-      this.updateGame(delta);
-    }
-
-    // Only render the game if not in game over state
-    if (!this.gameOver) {
-      this.renderer.render(this.snake, this.grid, this.score, this.level);
-    }
-    
-    // Store the animation frame ID and continue the loop
-    this.gameLoopId = requestAnimationFrame(timestamp => this.gameLoop(timestamp));
+    this.ui.updateHUD(this.score, this.level);
+    this.renderer.reset(this.snake, this.grid);
   }
 
-  /**
-   * Processes player input each frame
-   */
+  /** Kicks off a continuous async render/update loop (WebGPU render is async). */
+  startRenderLoop() {
+    const frame = async (now) => {
+      if (this.rendering) { requestAnimationFrame(frame); return; }
+      this.rendering = true;
+
+      const dt = Math.min(now - (this.lastFrameTime || now), 100);
+      this.lastFrameTime = now;
+
+      this.handleInput();
+      if (this.running && !this.paused && !this.gameOver) {
+        this.updateSimulation(dt);
+      }
+      await this.renderer.render(this.snake, this.grid, dt, {
+        running: this.running && !this.gameOver,
+        paused: this.paused
+      });
+
+      this.rendering = false;
+      requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+  }
+
   handleInput() {
-    // Handle pause toggle with debouncing
     if (this.inputHandler.isPausePressed()) {
-      if (!this.pausePressed) {
+      if (!this.pausePressed && this.running && !this.gameOver) {
         this.paused = !this.paused;
         this.ui.togglePauseMenu(this.paused);
-        
-        // Update audio state based on pause state
-        if (this.paused) {
-          this.audioManager.pauseBackgroundMusic();
-        } else {
-          this.audioManager.resumeBackgroundMusic();
-        }
-        
+        if (this.paused) this.audioManager.pauseBackgroundMusic();
+        else this.audioManager.resumeBackgroundMusic();
         this.pausePressed = true;
       }
     } else {
       this.pausePressed = false;
     }
 
-    // Handle quit to main menu (only when paused)
     if (this.paused && this.inputHandler.isQuitPressed()) {
       this.quitToMainMenu();
       return;
     }
 
-    // Process movement input when game is active
-    if (!this.paused && !this.gameOver) {
-      const directionInput = this.inputHandler.getDirection();
-      if (directionInput) {
-        // Apply direction change and provide immediate visual feedback
-        this.snake.changeDirection(directionInput.direction);
-        this.snake.setActiveDirection(directionInput.key, performance.now());
-      } else {
-        this.snake.clearActiveDirection();
-      }
+    if (this.running && !this.paused && !this.gameOver) {
+      const input = this.inputHandler.getDirection();
+      if (input) this.snake.setActiveDirection(input.key, performance.now());
+      else this.snake.clearActiveDirection();
     }
   }
 
-  /**
-   * Updates game state based on elapsed time
-   * @param {number} delta - Time elapsed since last frame in ms
-   */
-  updateGame(delta) {
-    this.accumulator += delta;
-    
-    // Calculate the snake's movement delay based on current level and length
-    const delay = this.snake.computeDelay(this.level);
-    
-    // Time-based movement system
-    while (this.accumulator >= delay) {
+  updateSimulation(dt) {
+    this.accumulator += dt;
+    let guard = 0;
+    let delay = this.snake.computeDelay(this.level);
+    while (this.accumulator >= delay && guard++ < 10) {
       this.accumulator -= delay;
-      this.updateSnake();
+      this.tick();
+      if (this.gameOver || this.paused) { this.accumulator = 0; break; }
+      delay = this.snake.computeDelay(this.level);
     }
   }
 
-  /**
-   * Updates snake position and handles collisions
-   */
-  updateSnake() {
+  /** One simulation step: resolve steer-or-fall, collisions, food, and locking. */
+  tick() {
     const head = this.snake.getHead();
-    const newHead = { 
-      x: head.x + this.snake.direction.x, 
-      y: head.y + this.snake.direction.y 
-    };
+    const neck = this.snake.getNeck();
 
-    // Check for collisions with walls or placed blocks
-    if (this.grid.isCollision(newHead.x, newHead.y)) {
-      this.audioManager.play('collision');
-      this.handleCollision();
-      return;
-    }
-    
-    // Check for self-collision (excluding head and tail)
-    if (this.snake.isCollidingWith(newHead.x, newHead.y, true)) {
-      this.audioManager.play('collision');
-      this.handleCollision();
-      return;
+    // Decide direction: steer horizontally if a valid key is held, else fall.
+    let dir = DOWN;
+    const input = this.inputHandler.getDirection();
+    if (input) {
+      const d = input.direction;
+      const nx = head.x + d.x, ny = head.y + d.y, nz = head.z + d.z;
+      const isReversal = neck && nx === neck.x && ny === neck.y && nz === neck.z;
+      const outside = this.grid.isOutsideXZ(nx, nz);
+      // A valid steer stays in-bounds and doesn't back into the neck; else fall.
+      if (!isReversal && !outside) dir = d;
     }
 
-    // Check for food collection
-    const isEating = this.grid.isSnakeEatingFood(newHead.x, newHead.y);
-    
-    // Play appropriate audio feedback
-    if (!isEating) {
+    const nx = head.x + dir.x, ny = head.y + dir.y, nz = head.z + dir.z;
+
+    // Landing on the floor, or crashing into a block or own body => lock.
+    const hitFloor = ny < 0;
+    const hitBlock = !hitFloor && this.grid.isStaticBlock(nx, ny, nz);
+    const hitSelf = !hitFloor && this.snake.isCollidingWith(nx, ny, nz, true);
+
+    if (hitFloor || hitBlock || hitSelf) {
+      this.handleLock();
+      return;
+    }
+
+    const eating = this.grid.isFood(nx, ny, nz);
+    this.snake.move(dir, eating);
+    this.renderer.onSnakeMoved(this.snake);
+
+    if (eating) {
+      this.handleFoodEaten(nx, ny, nz);
+    } else {
       this.audioManager.play('move');
     }
-    
-    this.snake.move(isEating);
-    
-    if (isEating) {
-      this.handleFoodEaten();
-    }
   }
 
-  /**
-   * Handles collision between snake and grid/blocks
-   */
-  handleCollision() {
-    // Play impact sound
+  handleLock() {
     this.audioManager.play('collision');
-    
-    // Add a brief screen shake effect
-    const gameContainer = document.getElementById('gameContainer');
-    gameContainer.classList.add('shake');
-    setTimeout(() => {
-      gameContainer.classList.remove('shake');
-    }, 300);
-    
-    // Convert snake to static blocks
-    this.grid.lockSnake(this.snake);
-    
-    // Check for and clear completed lines
-    const linesCleared = this.grid.clearLines();
-    
-    if (linesCleared > 0) {
+    this.renderer.shake(0.55);
+
+    const locked = this.grid.lockSnake(this.snake);
+    this.renderer.addBlocks(locked);
+    this.renderer.burst(this.snake.getHead(), config.COLORS.BLOCK, 14);
+
+    const result = this.grid.clearLayers();
+    if (result.cleared > 0) {
       this.audioManager.play('lineClear');
-      this.score += linesCleared * 50 * this.level;
+      this.score += config.SCORING.LAYER * this.level * result.cleared * result.cleared;
+      this.renderer.onLayersCleared(result.layers);
+      this.renderer.shake(0.35 + 0.25 * result.cleared);
     }
-    
-    // Update level based on blocks placed - make it less frequent to prevent bugs
-    // Changed from 50 to 80 blocks per level to slow down progression
-    this.level = 1 + Math.floor(this.grid.landedBlocks / 80);
-    
-    // Intensify music at higher levels - pass the numeric level instead of 'intense'
+    this.renderer.syncBlocks(this.grid);
+
+    this.level = 1 + Math.floor(this.grid.landedBlocks / config.SCORING.BLOCKS_PER_LEVEL);
     if (this.level >= 5 && !this.audioManager.isMusicMuted) {
-      // Pass the actual level number instead of a string
       this.audioManager.changeBackgroundMusic(this.level);
     }
-    
-    // Spawn new snake
+    this.ui.updateHUD(this.score, this.level);
+
     this.snake.spawn();
-    
-    // End game if no room to spawn
-    if (this.snake.body.some(seg => this.grid.isStaticBlock(seg.x, seg.y))) {
+    this.renderer.onSnakeRespawned(this.snake);
+
+    // Game over if the freshly spawned snake overlaps existing blocks.
+    if (this.snake.body.some((s) => s.y < config.GRID_H && this.grid.isStaticBlock(s.x, s.y, s.z))) {
       this.endGame();
     }
   }
 
-  /**
-   * Handles food collection logic
-   */
-  handleFoodEaten() {
+  handleFoodEaten(x, y, z) {
     this.audioManager.play('eat');
-    this.score += this.level * 10;
-    
-    // Update music speed based on snake length to match gameplay speed
-    // Only update if music isn't muted
+    this.score += config.SCORING.FOOD * this.level;
+    this.ui.updateHUD(this.score, this.level);
+    this.renderer.burst({ x, y, z }, config.COLORS.FOOD, 22);
+
     if (!this.audioManager.isMusicMuted && this.snake.body.length > 1) {
-      // Calculate effective speed level from snake length
-      // Use snake length directly in a formula that smoothly increases with length
-      // Every ~8 segments = +1 music level
-      const lengthSpeedLevel = 1 + (this.snake.body.length / 8);
-      
-      // Use the higher of game level or length-based level
-      const effectiveLevel = Math.max(this.level, lengthSpeedLevel);
-      
-      // Update the music speed gradually
-      this.audioManager.changeBackgroundMusic(effectiveLevel);
+      const lengthLevel = 1 + this.snake.body.length / 8;
+      this.audioManager.changeBackgroundMusic(Math.max(this.level, lengthLevel));
     }
-    
+
     this.grid.spawnFood(this.snake);
+    this.renderer.onFoodMoved(this.grid.food);
   }
 
-  /**
-   * Triggers game over state
-   */
   endGame() {
     this.gameOver = true;
+    this.running = false;
     this.audioManager.play('gameOver');
     this.audioManager.stopBackgroundMusic();
+    this.renderer.shake(0.8);
     this.ui.showGameOver(this.score, this.level);
   }
-  /**
-   * Exits to main menu from the game
-   */
+
   quitToMainMenu() {
-    this.stopGameLoop(); // Stop the game loop when quitting to menu
+    this.running = false;
     this.paused = false;
     this.gameOver = false;
     this.ui.hideAll();
@@ -330,4 +249,4 @@ class Game {
     this.audioManager.stopBackgroundMusic();
     this.reset();
   }
-} 
+}

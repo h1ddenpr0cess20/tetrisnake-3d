@@ -1,155 +1,91 @@
-/**
- * Snake Class
- * Represents the player-controlled snake in the game.
- * Handles movement, collision detection, and dynamic speed calculations.
- */
-class Snake {
-  /**
-   * Initializes a new Snake instance
-   */
-  constructor() {
-    this.body = [];                     // Array of body segments (each with x,y)
-    this.direction = { x: 0, y: 1 };    // Current movement direction
-    this.nextDirection = null;          // Buffered next direction change
-    this.activeDirectionKey = null;     // Currently held direction key
-    this.keyHoldStart = 0;              // Timestamp when key was first held
-    this.lastUpdateTime = 0;            // Timestamp of last movement update
-    this.directionChangeDelay = 16;     // Minimum delay between direction changes (1 frame at 60fps)
-  }
+import { config } from './config.js';
 
-  /**
-   * Creates a new snake at the starting position
-   */
-  spawn() {
+/**
+ * Snake (3D)
+ * Represents the player-controlled snake moving through the 3D well.
+ * Each body segment is a grid cell { x, y, z }. y increases upward; the
+ * snake falls toward y = 0. Direction is a unit vector along one axis and is
+ * decided by the Game every tick (steer while a key is held, otherwise fall).
+ */
+export class Snake {
+  constructor() {
     this.body = [];
-    const startY = 0;                   // Start at the top of the grid
-    const startX = Math.floor(config.GRID_WIDTH / 2); // Center horizontally
-    const initialLen = Math.floor(Math.random() * Math.min(4, Math.floor(config.GRID_HEIGHT / 2))) + 1;
-    
-    // Create a vertical snake with random initial length
-    for (let i = 0; i < initialLen; i++) {
-      this.body.push({ x: startX, y: startY - i });
-    }
-    
-    // Reset movement properties
-    this.direction = { x: 0, y: 1 };    // Start moving downward
-    this.nextDirection = null;
+    this.direction = { x: 0, y: -1, z: 0 }; // falling
     this.activeDirectionKey = null;
     this.keyHoldStart = 0;
     this.lastUpdateTime = 0;
   }
 
-  /**
-   * Returns the head segment of the snake
-   * @returns {Object} The head segment with x,y coordinates
-   */
+  /** Spawns a fresh snake as a short vertical column at the top-center of the well. */
+  spawn() {
+    this.body = [];
+    const startX = Math.floor(config.GRID_W / 2);
+    const startZ = Math.floor(config.GRID_D / 2);
+    const startY = config.GRID_H - 1;
+    const initialLen = Math.floor(Math.random() * 3) + 2; // 2..4 segments
+
+    // Head at top; earlier body extends upward (above the well) so it slides in.
+    for (let i = 0; i < initialLen; i++) {
+      this.body.push({ x: startX, y: startY + i, z: startZ });
+    }
+
+    this.direction = { x: 0, y: -1, z: 0 };
+    this.activeDirectionKey = null;
+    this.keyHoldStart = 0;
+    this.lastUpdateTime = 0;
+  }
+
   getHead() {
     return this.body[0];
   }
 
+  getNeck() {
+    return this.body.length > 1 ? this.body[1] : null;
+  }
+
   /**
-   * Moves the snake one step in the current direction
-   * @param {boolean} eatFood - Whether the snake is eating food
-   * @returns {Object} The new head position
+   * Advances the snake one cell in the given direction.
+   * @param {{x,y,z}} dir - unit direction vector
+   * @param {boolean} eatFood - grow (keep tail) if true
+   * @returns {{x,y,z}} the new head
    */
-  move(eatFood) {
-    const now = performance.now();
-    
-    // Apply any buffered direction change
-    if (this.nextDirection) {
-      this.direction = this.nextDirection;
-      this.nextDirection = null;
-    }
-    
-    // Calculate new head position
+  move(dir, eatFood) {
+    this.direction = dir;
     const head = this.getHead();
-    const newHead = { x: head.x + this.direction.x, y: head.y + this.direction.y };
-    
-    // Add new head to the front
+    const newHead = { x: head.x + dir.x, y: head.y + dir.y, z: head.z + dir.z };
     this.body.unshift(newHead);
-    
-    // Remove tail unless eating food
-    if (!eatFood) {
-      this.body.pop();
-    }
-    
-    this.lastUpdateTime = now;
+    if (!eatFood) this.body.pop();
+    this.lastUpdateTime = performance.now();
     return newHead;
   }
 
   /**
-   * Attempts to change the snake's direction
-   * @param {Object} newDir - The new direction vector {x, y}
-   * @returns {boolean} Whether the direction was changed
-   */
-  changeDirection(newDir) {
-    const now = performance.now();
-    
-    // Prevent 180-degree turns (snake can't reverse into itself)
-    if (newDir.x === -this.direction.x && newDir.y === -this.direction.y) {
-      return false;
-    }
-    
-    // Check if this is actually a new direction
-    const isNewDirection = newDir.x !== this.direction.x || newDir.y !== this.direction.y;
-    
-    // Buffer direction change if too soon after last movement
-    if (isNewDirection && now - this.lastUpdateTime < this.directionChangeDelay) {
-      this.nextDirection = newDir;
-      return true;
-    }
-    
-    // Apply immediate direction change
-    if (isNewDirection) {
-      this.direction = newDir;
-    }
-    
-    return isNewDirection;
-  }
-
-  /**
-   * Calculates the current movement delay based on level and input
-   * @param {number} level - The current game level
-   * @returns {number} The calculated delay in milliseconds
+   * Computes the tick delay based on level, length, and steer-hold acceleration.
+   * @param {number} level
+   * @returns {number} delay in ms
    */
   computeDelay(level) {
-    // Adjust base speed based on level and snake length
     const extraSegments = this.body.length - 1;
-    
-    // Calculate level-based speed reduction
-    const levelSpeedReduction = Math.min(level - 1, 9) * 20; // Increased level impact
-    
-    // VERY dramatic per-segment effect - 20ms per segment
-    // At 10 segments, this would reduce delay by 200ms!
-    const lengthSpeedReduction = extraSegments * 20;
-    
-    // Ensure a reasonable minimum speed (not too fast)
+    const levelSpeedReduction = Math.min(level - 1, 9) * 18;
+    const lengthSpeedReduction = extraSegments * 14;
+
     const baseDelay = Math.max(
-      60, // Slightly lower minimum delay
+      config.SPEEDS.MIN_DELAY + 20,
       config.SPEEDS.MOVE_DELAY - levelSpeedReduction - lengthSpeedReduction
     );
-    
-    // Apply acceleration when holding down a direction key
+
     let finalDelay = baseDelay;
     if (this.activeDirectionKey && this.keyHoldStart) {
       const holdTime = performance.now() - this.keyHoldStart;
       const factor = Math.min(holdTime / config.SPEEDS.HOLD_SCALE, 1);
-      
-      // Calculate accelerated speed with a reasonable minimum
       finalDelay = Math.max(
-        40, // Allow even faster speed with key held
+        config.SPEEDS.MIN_DELAY,
         baseDelay - (baseDelay - config.SPEEDS.FAST_MOVE_DELAY) * factor
       );
     }
-    
     return finalDelay;
   }
 
-  /**
-   * Sets the active direction key being held
-   * @param {string} key - The key identifier
-   * @param {number} timestamp - The time when the key was pressed
-   */
   setActiveDirection(key, timestamp) {
     if (this.activeDirectionKey !== key) {
       this.activeDirectionKey = key;
@@ -157,34 +93,20 @@ class Snake {
     }
   }
 
-  /**
-   * Clears any active direction key state
-   */
   clearActiveDirection() {
     this.activeDirectionKey = null;
     this.keyHoldStart = 0;
   }
 
   /**
-   * Checks if a position collides with the snake's body
-   * @param {number} x - X coordinate to check
-   * @param {number} y - Y coordinate to check
-   * @param {boolean} excludeTail - Whether to exclude the tail segment from collision check
-   * @returns {boolean} True if collision detected
+   * Whether a cell collides with the snake body.
+   * @param {boolean} excludeTail - ignore the last segment (it will vacate)
    */
-  isCollidingWith(x, y, excludeTail = false) {
+  isCollidingWith(x, y, z, excludeTail = false) {
     return this.body.some((seg, i) => {
-      // Skip the head since we're checking for the position of the new head
-      if (i === 0) {
-        return false;
-      }
-      
-      // Optionally skip the tail (useful when snake is moving)
-      if (excludeTail && i === this.body.length - 1) {
-        return false;
-      }
-      
-      return seg.x === x && seg.y === y;
+      if (i === 0) return false;
+      if (excludeTail && i === this.body.length - 1) return false;
+      return seg.x === x && seg.y === y && seg.z === z;
     });
   }
-} 
+}

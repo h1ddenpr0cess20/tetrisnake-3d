@@ -4,7 +4,7 @@
  * Includes procedurally generated sound effects and background music.
  * Manages audio state, muting, and transitions between different music tracks.
  */
-class AudioManager {
+export class AudioManager {
   /**
    * Initializes the audio system
    */

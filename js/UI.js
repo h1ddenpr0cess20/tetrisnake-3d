@@ -1,15 +1,11 @@
 /**
- * UI Class
- * Manages all user interface elements, overlays, and interaction callbacks.
- * Handles menu transitions, button states, and event bindings.
+ * UI
+ * Manages overlays (menu/pause/game-over), audio toggle buttons, the live HUD,
+ * and mobile control visibility. Rendering of the play field is handled by the
+ * WebGPU renderer; the HUD is plain DOM for crisp text.
  */
-class UI {
-  /**
-   * Creates a UI manager
-   * @param {Object} elementIds - Object containing IDs of UI elements
-   */
+export class UI {
   constructor(elementIds) {
-    // Store references to all UI elements
     this.elements = {
       mainMenu: document.getElementById(elementIds.mainMenu),
       paused: document.getElementById(elementIds.paused),
@@ -24,100 +20,55 @@ class UI {
       toggleSoundPaused: document.getElementById('toggleSoundPaused'),
       toggleMusic: document.getElementById('toggleMusic'),
       toggleMusicPaused: document.getElementById('toggleMusicPaused'),
-      mobileControls: document.getElementById('mobileControls')
+      mobileControls: document.getElementById('mobileControls'),
+      hud: document.getElementById('hud'),
+      hudScore: document.getElementById('hudScore'),
+      hudLevel: document.getElementById('hudLevel')
     };
-    
-    // Initial audio settings
+
     this.soundEnabled = true;
     this.musicEnabled = true;
-    this.soundToggleCallback = null;
-    this.musicToggleCallback = null;
     this.isMobile = this.detectMobile();
-    
-    // Initialize mobile controls visibility
     this.updateMobileControlsVisibility();
   }
 
-  /**
-   * Detects if the device is mobile
-   * @returns {boolean} True if mobile device
-   */
   detectMobile() {
     return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
-           ('ontouchstart' in window) ||
-           (window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+      ('ontouchstart' in window) ||
+      (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
   }
 
-  /**
-   * Updates mobile controls visibility based on device type and game state
-   */
   updateMobileControlsVisibility() {
     if (this.elements.mobileControls) {
-      if (this.isMobile) {
-        this.elements.mobileControls.style.display = 'block';
-      } else {
-        this.elements.mobileControls.style.display = 'none';
-      }
+      this.elements.mobileControls.style.display = this.isMobile ? 'block' : 'none';
     }
   }
 
-  /**
-   * Shows mobile controls during gameplay
-   */
   showMobileControls() {
-    if (this.elements.mobileControls && this.isMobile) {
-      this.elements.mobileControls.style.display = 'block';
-    }
+    if (this.elements.mobileControls && this.isMobile) this.elements.mobileControls.style.display = 'block';
   }
-
-  /**
-   * Hides mobile controls during menus
-   */
   hideMobileControls() {
-    if (this.elements.mobileControls) {
-      this.elements.mobileControls.style.display = 'none';
-    }
+    if (this.elements.mobileControls) this.elements.mobileControls.style.display = 'none';
   }
 
-  /**
-   * Displays the main menu
-   */
+  showHUD() { if (this.elements.hud) this.elements.hud.classList.remove('hidden'); }
+  hideHUD() { if (this.elements.hud) this.elements.hud.classList.add('hidden'); }
+
+  updateHUD(score, level) {
+    if (this.elements.hudScore) this.elements.hudScore.textContent = score.toLocaleString();
+    if (this.elements.hudLevel) this.elements.hudLevel.textContent = level;
+  }
+
   showMainMenu() {
     this.hideAll();
-    this.elements.mainMenu.classList.remove("hidden");
+    this.elements.mainMenu.classList.remove('hidden');
     this.hideMobileControls();
+    this.hideHUD();
   }
+  hideMainMenu() { this.elements.mainMenu.classList.add('hidden'); }
 
-  /**
-   * Hides the main menu
-   */
-  hideMainMenu() {
-    this.elements.mainMenu.classList.add("hidden");
-  }
-
-  /**
-   * Displays the pause menu
-   */
-  showPauseMenu() {
-    this.elements.paused.classList.remove("hidden");
-    this.hideMobileControls();
-  }
-
-  /**
-   * Hides the pause menu
-   */
-  hidePauseMenu() {
-    this.elements.paused.classList.add("hidden");
-  }
-
-  /**
-   * Toggles the visibility of the pause menu
-   * @param {boolean} isPaused - Whether the game is paused
-   */
   togglePauseMenu(isPaused) {
-    this.elements.paused.classList.toggle("hidden", !isPaused);
-    
-    // Sync button states when showing pause menu
+    this.elements.paused.classList.toggle('hidden', !isPaused);
     if (isPaused) {
       this.updateSoundButtonText();
       this.updateMusicButtonText();
@@ -127,147 +78,55 @@ class UI {
     }
   }
 
-  /**
-   * Displays the game over screen with final score and level
-   * @param {number} score - Final score
-   * @param {number} level - Final level reached
-   */
   showGameOver(score, level) {
-    this.elements.finalScore.textContent = `Final Score: ${score}`;
+    this.elements.finalScore.textContent = `Final Score: ${score.toLocaleString()}`;
     this.elements.finalLevel.textContent = `Level Reached: ${level}`;
-    this.elements.gameOver.classList.remove("hidden");
+    this.elements.gameOver.classList.remove('hidden');
     this.hideMobileControls();
+    this.hideHUD();
   }
+  hideGameOver() { this.elements.gameOver.classList.add('hidden'); }
 
-  /**
-   * Hides the game over screen
-   */
-  hideGameOver() {
-    this.elements.gameOver.classList.add("hidden");
-  }
-
-  /**
-   * Hides all UI overlay screens
-   */
   hideAll() {
-    this.elements.mainMenu.classList.add("hidden");
-    this.elements.paused.classList.add("hidden");
-    this.elements.gameOver.classList.add("hidden");
+    this.elements.mainMenu.classList.add('hidden');
+    this.elements.paused.classList.add('hidden');
+    this.elements.gameOver.classList.add('hidden');
   }
 
-  /**
-   * Binds the start game button click event
-   * @param {Function} callback - Function to call when start button is clicked
-   */
-  onStartGame(callback) {
-    this.elements.startButton.addEventListener("click", callback);
-  }
+  onStartGame(cb) { this.elements.startButton.addEventListener('click', cb); }
+  onRestartGame(cb) { this.elements.restartButton.addEventListener('click', cb); }
+  onResumeGame(cb) { if (this.elements.resumeButton) this.elements.resumeButton.addEventListener('click', cb); }
+  onQuitToMenu(cb) { if (this.elements.quitButton) this.elements.quitButton.addEventListener('click', cb); }
 
-  /**
-   * Binds the restart game button click event
-   * @param {Function} callback - Function to call when restart button is clicked
-   */
-  onRestartGame(callback) {
-    this.elements.restartButton.addEventListener("click", callback);
-  }
-
-  /**
-   * Binds the resume game button click event
-   * @param {Function} callback - Function to call when resume button is clicked
-   */
-  onResumeGame(callback) {
-    if (this.elements.resumeButton) {
-      this.elements.resumeButton.addEventListener("click", callback);
-    }
-  }
-
-  /**
-   * Binds the quit to menu button click event
-   * @param {Function} callback - Function to call when quit button is clicked
-   */
-  onQuitToMenu(callback) {
-    if (this.elements.quitButton) {
-      this.elements.quitButton.addEventListener("click", callback);
-    }
-  }
-
-  /**
-   * Binds sound toggle buttons across all menus
-   * @param {Function} callback - Function to call when sound toggle is clicked
-   */
   onSoundToggle(callback) {
-    this.soundToggleCallback = callback;
-    
-    const handleSoundToggle = () => {
-      // Get the mute state from callback and update UI
+    const handle = () => {
       const isMuted = callback();
-      this.soundEnabled = !isMuted; // Enabled is opposite of muted
+      this.soundEnabled = !isMuted;
       this.updateSoundButtonText();
     };
-    
-    // Bind sound toggle buttons in both menus
-    if (this.elements.toggleSound) {
-      this.elements.toggleSound.addEventListener("click", handleSoundToggle);
-    }
-    
-    if (this.elements.toggleSoundPaused) {
-      this.elements.toggleSoundPaused.addEventListener("click", handleSoundToggle);
-    }
+    if (this.elements.toggleSound) this.elements.toggleSound.addEventListener('click', handle);
+    if (this.elements.toggleSoundPaused) this.elements.toggleSoundPaused.addEventListener('click', handle);
   }
 
-  /**
-   * Binds music toggle buttons across all menus
-   * @param {Function} callback - Function to call when music toggle is clicked
-   */
   onMusicToggle(callback) {
-    this.musicToggleCallback = callback;
-    
-    const handleMusicToggle = () => {
-      // Get the mute state from callback and update UI
+    const handle = () => {
       const isMuted = callback();
-      this.musicEnabled = !isMuted; // Enabled is opposite of muted
+      this.musicEnabled = !isMuted;
       this.updateMusicButtonText();
     };
-    
-    // Bind music toggle buttons in both menus
-    if (this.elements.toggleMusic) {
-      this.elements.toggleMusic.addEventListener("click", handleMusicToggle);
-    }
-    
-    if (this.elements.toggleMusicPaused) {
-      this.elements.toggleMusicPaused.addEventListener("click", handleMusicToggle);
-    }
+    if (this.elements.toggleMusic) this.elements.toggleMusic.addEventListener('click', handle);
+    if (this.elements.toggleMusicPaused) this.elements.toggleMusicPaused.addEventListener('click', handle);
   }
 
-  /**
-   * Updates the text on all sound toggle buttons
-   */
   updateSoundButtonText() {
-    const status = this.soundEnabled ? "On" : "Off";
-    
-    // Update text in both menus
-    if (this.elements.toggleSound) {
-      this.elements.toggleSound.textContent = `Sound: ${status}`;
-    }
-    
-    if (this.elements.toggleSoundPaused) {
-      this.elements.toggleSoundPaused.textContent = `Sound: ${status}`;
-    }
+    const status = this.soundEnabled ? 'On' : 'Off';
+    if (this.elements.toggleSound) this.elements.toggleSound.textContent = `Sound: ${status}`;
+    if (this.elements.toggleSoundPaused) this.elements.toggleSoundPaused.textContent = `Sound: ${status}`;
   }
 
-  /**
-   * Updates the text on all music toggle buttons
-   */
   updateMusicButtonText() {
-    const status = this.musicEnabled ? "On" : "Off";
-    
-    // Update text in both menus
-    if (this.elements.toggleMusic) {
-      this.elements.toggleMusic.textContent = `Music: ${status}`;
-    }
-    
-    if (this.elements.toggleMusicPaused) {
-      this.elements.toggleMusicPaused.textContent = `Music: ${status}`;
-    }
+    const status = this.musicEnabled ? 'On' : 'Off';
+    if (this.elements.toggleMusic) this.elements.toggleMusic.textContent = `Music: ${status}`;
+    if (this.elements.toggleMusicPaused) this.elements.toggleMusicPaused.textContent = `Music: ${status}`;
   }
 }
