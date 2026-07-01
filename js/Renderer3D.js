@@ -39,6 +39,19 @@ export class Renderer3D {
     mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
   }
 
+  /**
+   * Hides an instance by collapsing it to a zero-scale matrix. Instanced meshes
+   * always draw their full capacity (so the pipeline's instance count is stable
+   * from the first frame); unused slots are simply scaled to nothing.
+   */
+  hideInstance(mesh, i) {
+    this._m.position.set(0, -9999, 0);
+    this._m.rotation.set(0, 0, 0);
+    this._m.scale.setScalar(0);
+    this._m.updateMatrix();
+    mesh.setMatrixAt(i, this._m.matrix);
+  }
+
   cellToWorld(x, y, z, out = new THREE.Vector3()) {
     return out.set(
       (x - (GRID_W - 1) / 2) * CELL,
@@ -93,7 +106,7 @@ export class Renderer3D {
   }
 
   buildLights() {
-    this.scene.add(new THREE.HemisphereLight(0x8899ff, 0x0a0a18, 0.55));
+    this.scene.add(new THREE.HemisphereLight(0x8899ff, 0x1a1a2e, 0.85));
 
     const key = new THREE.DirectionalLight(0xffffff, 1.6);
     key.position.set(GRID_W * CELL, GRID_H * CELL * 1.1, GRID_D * CELL * 1.2);
@@ -181,15 +194,17 @@ export class Renderer3D {
   buildBlocks() {
     const geo = new RoundedBoxGeometry(CELL * 0.92, CELL * 0.92, CELL * 0.92, 2, CELL * 0.12);
     const mat = new THREE.MeshStandardNodeMaterial({
-      color: 0xffffff, roughness: 0.4, metalness: 0.35,
-      emissive: new THREE.Color(config.COLORS.BLOCK).multiplyScalar(0.12)
+      color: 0xffffff, roughness: 0.45, metalness: 0.25,
+      emissive: new THREE.Color(config.COLORS.BLOCK).multiplyScalar(0.45)
     });
     this.blocks = new THREE.InstancedMesh(geo, mat, BLOCK_CAP);
     this.blocks.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.initInstanceColor(this.blocks, BLOCK_CAP);
     this.blocks.castShadow = true;
     this.blocks.receiveShadow = true;
-    this.blocks.count = 0;
+    this.blocks.frustumCulled = false;
+    this.blocks.count = BLOCK_CAP;
+    for (let i = 0; i < BLOCK_CAP; i++) this.hideInstance(this.blocks, i);
     this.scene.add(this.blocks);
   }
 
@@ -203,7 +218,9 @@ export class Renderer3D {
     this.snakeBody.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.initInstanceColor(this.snakeBody, SNAKE_CAP);
     this.snakeBody.castShadow = true;
-    this.snakeBody.count = 0;
+    this.snakeBody.frustumCulled = false;
+    this.snakeBody.count = SNAKE_CAP;
+    for (let i = 0; i < SNAKE_CAP; i++) this.hideInstance(this.snakeBody, i);
     this.scene.add(this.snakeBody);
 
     // Head
@@ -256,8 +273,9 @@ export class Renderer3D {
     this.particleMesh = new THREE.InstancedMesh(geo, mat, PARTICLE_CAP);
     this.particleMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.initInstanceColor(this.particleMesh, PARTICLE_CAP);
-    this.particleMesh.count = 0;
+    this.particleMesh.count = PARTICLE_CAP;
     this.particleMesh.frustumCulled = false;
+    for (let i = 0; i < PARTICLE_CAP; i++) this.hideInstance(this.particleMesh, i);
     this.scene.add(this.particleMesh);
     for (let i = 0; i < PARTICLE_CAP; i++) {
       this.particles.push({ life: 0, maxLife: 1, pos: new THREE.Vector3(), vel: new THREE.Vector3(), col: new THREE.Color(), size: 1 });
@@ -315,7 +333,7 @@ export class Renderer3D {
       this.blockKeyToIndex.set(posKey, i);
       i++;
     }
-    this.blocks.count = i;
+    for (let j = i; j < BLOCK_CAP; j++) this.hideInstance(this.blocks, j);
     this.blocks.instanceMatrix.needsUpdate = true;
     if (this.blocks.instanceColor) this.blocks.instanceColor.needsUpdate = true;
   }
@@ -401,7 +419,7 @@ export class Renderer3D {
       this.snakeBody.setColorAt(count, this._c);
       count++;
     }
-    this.snakeBody.count = count;
+    for (let j = count; j < SNAKE_CAP; j++) this.hideInstance(this.snakeBody, j);
     this.snakeBody.instanceMatrix.needsUpdate = true;
     if (this.snakeBody.instanceColor) this.snakeBody.instanceColor.needsUpdate = true;
 
@@ -453,7 +471,7 @@ export class Renderer3D {
       this.particleMesh.setColorAt(count, this._c.copy(p.col).multiplyScalar(0.6 + l));
       count++;
     }
-    this.particleMesh.count = count;
+    for (let j = count; j < PARTICLE_CAP; j++) this.hideInstance(this.particleMesh, j);
     this.particleMesh.instanceMatrix.needsUpdate = true;
     if (this.particleMesh.instanceColor) this.particleMesh.instanceColor.needsUpdate = true;
   }
