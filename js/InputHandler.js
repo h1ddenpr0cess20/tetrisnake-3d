@@ -135,6 +135,9 @@ export class InputHandler {
     return this.inputBuffer.length ? this.inputBuffer.shift() : null;
   }
 
+  /** Discards any buffered turns so a fresh snake starts on its own heading. */
+  clearBuffer() { this.inputBuffer = []; }
+
   /** @returns {boolean} Whether Shift (boost) is held. */
   isBoosting() { return this.isKeyPressed('shift'); }
 

@@ -97,6 +97,7 @@ export class Game {
     this.renderer.setSnakeVisible(true);
     this.grid.reset();
     this.snake.spawn();
+    this.inputHandler.clearBuffer();
     this.grid.spawnFood(this.snake);
     this.ui.updateHUD(this.score, this.level, this.speedMult);
     this.renderer.reset(this.snake, this.grid);
@@ -243,6 +244,7 @@ export class Game {
   doRespawn() {
     this.pendingRespawn = false;
     this.snake.spawn();
+    this.inputHandler.clearBuffer();
     this.renderer.onSnakeRespawned(this.snake);
     this.renderer.setSnakeVisible(true);
 
